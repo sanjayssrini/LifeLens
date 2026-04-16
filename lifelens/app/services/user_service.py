@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from threading import Lock
 from typing import Any, Dict, List
 
 from fastapi import HTTPException
@@ -14,6 +15,9 @@ class UserService:
         self.memory_service = memory_service
         self.client = memory_service.client
         self.collection_name = "users"
+        self._lock = Lock()
+        self._local_users_by_id: Dict[str, Dict[str, Any]] = {}
+        self._local_user_id_by_contact: Dict[str, str] = {}
 
     def ensure_collection(self) -> None:
         if self.client is None:
@@ -39,6 +43,9 @@ class UserService:
             raise HTTPException(status_code=503, detail="Qdrant is required for user storage.")
         return self.client
 
+    def _using_local_store(self) -> bool:
+        return self.client is None
+
     def _sanitize(self, value: str) -> str:
         return value.strip()
 
@@ -46,15 +53,10 @@ class UserService:
         return f"name:{name.lower()} contact:{phone_or_email.lower()}"
 
     def create_user(self, name: str, phone_or_email: str) -> Dict[str, Any]:
-        client = self._require_client()
         clean_name = self._sanitize(name)
         clean_contact = self._sanitize(phone_or_email).lower()
         if not clean_name or not clean_contact:
             raise HTTPException(status_code=400, detail="Name and phone/email are required.")
-
-        existing = self.find_by_contact(clean_contact)
-        if existing:
-            raise HTTPException(status_code=409, detail="User already exists. Please log in.")
 
         user_id = str(uuid.uuid4())
         profile_text = self._identity_text(clean_name, clean_contact)
@@ -67,6 +69,20 @@ class UserService:
             "memory": [],
         }
 
+        if self._using_local_store():
+            with self._lock:
+                existing_user_id = self._local_user_id_by_contact.get(clean_contact)
+                if existing_user_id and existing_user_id in self._local_users_by_id:
+                    raise HTTPException(status_code=409, detail="User already exists. Please log in.")
+                self._local_users_by_id[user_id] = payload
+                self._local_user_id_by_contact[clean_contact] = user_id
+            return payload
+
+        client = self._require_client()
+        existing = self.find_by_contact(clean_contact)
+        if existing:
+            raise HTTPException(status_code=409, detail="User already exists. Please log in.")
+
         client.upsert(
             collection_name=self.collection_name,
             points=[PointStruct(id=user_id, vector=vector, payload=payload)],
@@ -74,8 +90,16 @@ class UserService:
         return payload
 
     def find_by_contact(self, phone_or_email: str) -> Dict[str, Any] | None:
-        client = self._require_client()
         clean_contact = self._sanitize(phone_or_email).lower()
+        if self._using_local_store():
+            with self._lock:
+                user_id = self._local_user_id_by_contact.get(clean_contact)
+                if not user_id:
+                    return None
+                user = self._local_users_by_id.get(user_id)
+                return dict(user) if user else None
+
+        client = self._require_client()
         records, _ = client.scroll(
             collection_name=self.collection_name,
             scroll_filter=Filter(
@@ -90,9 +114,18 @@ class UserService:
         return records[0].payload
 
     def find_by_user_id(self, user_id: str) -> Dict[str, Any] | None:
+        parsed_user_id = str(user_id).strip()
+        if not parsed_user_id:
+            return None
+
+        if self._using_local_store():
+            with self._lock:
+                user = self._local_users_by_id.get(parsed_user_id)
+                return dict(user) if user else None
+
         client = self._require_client()
         try:
-            parsed_user_id = str(uuid.UUID(str(user_id).strip()))
+            parsed_user_id = str(uuid.UUID(parsed_user_id))
         except (ValueError, AttributeError, TypeError):
             return None
 
@@ -107,6 +140,21 @@ class UserService:
         return points[0].payload
 
     def find_by_similarity(self, query: str, limit: int = 3) -> List[Dict[str, Any]]:
+        if self._using_local_store():
+            normalized = query.strip().lower()
+            if not normalized:
+                return []
+            with self._lock:
+                matches: List[Dict[str, Any]] = []
+                for user in self._local_users_by_id.values():
+                    name = str(user.get("name", "")).lower()
+                    contact = str(user.get("phone_or_email", "")).lower()
+                    if normalized in name or normalized in contact:
+                        matches.append(dict(user))
+                if matches:
+                    return matches[:limit]
+                return [dict(user) for user in list(self._local_users_by_id.values())[:limit]]
+
         client = self._require_client()
         vector = self.memory_service.embed(query)
         hits = client.search(
@@ -135,7 +183,6 @@ class UserService:
         raise HTTPException(status_code=404, detail="User not found. Please sign up.")
 
     def append_user_memory(self, user_id: str, memory_item: Dict[str, Any], max_items: int = 30) -> None:
-        client = self._require_client()
         user = self.find_by_user_id(user_id)
         if not user:
             raise HTTPException(status_code=404, detail="User not found.")
@@ -153,13 +200,22 @@ class UserService:
             vector = self.memory_service.embed(self._identity_text(str(user.get("name", "")), str(user.get("phone_or_email", ""))))
             payload_update["embedding"] = vector
 
+        if self._using_local_store():
+            with self._lock:
+                self._local_users_by_id[user_id] = payload_update
+                contact = str(payload_update.get("phone_or_email", "")).lower()
+                if contact:
+                    self._local_user_id_by_contact[contact] = user_id
+            return
+
+        client = self._require_client()
+
         client.upsert(
             collection_name=self.collection_name,
             points=[PointStruct(id=user_id, vector=[float(v) for v in vector], payload=payload_update)],
         )
 
     def clear_user_memory(self, user_id: str) -> None:
-        client = self._require_client()
         user = self.find_by_user_id(user_id)
         if not user:
             raise HTTPException(status_code=404, detail="User not found.")
@@ -173,6 +229,13 @@ class UserService:
             )
             payload_update["embedding"] = vector
 
+        if self._using_local_store():
+            with self._lock:
+                self._local_users_by_id[user_id] = payload_update
+            return
+
+        client = self._require_client()
+
         client.upsert(
             collection_name=self.collection_name,
             points=[PointStruct(id=user_id, vector=[float(v) for v in vector], payload=payload_update)],
@@ -181,6 +244,16 @@ class UserService:
     def bulk_get_users(self, user_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         if not user_ids:
             return {}
+
+        if self._using_local_store():
+            with self._lock:
+                result: Dict[str, Dict[str, Any]] = {}
+                for user_id in user_ids:
+                    user = self._local_users_by_id.get(str(user_id).strip())
+                    if user:
+                        result[str(user.get("user_id", ""))] = dict(user)
+                return result
+
         client = self._require_client()
         records, _ = client.scroll(
             collection_name=self.collection_name,

@@ -62,26 +62,35 @@ lifelens/
 
 ## Environment Variables
 
-Fill `.env`:
+Fill `.env` by copying `.env.example` file:
 
 ```env
-VAPI_PUBLIC_KEY=
-VAPI_PRIVATE_KEY=
-VAPI_ASSISTANT_ID=
-QDRANT_API_KEY=
-QDRANT_URL=
-GEMINI_API_KEY=
-GEMINI_MODEL=gemma-4-26b-it
+VAPI_PUBLIC_KEY=<Your VAPI public key here>
+VAPI_PRIVATE_KEY=<Your VAPI private key here>
+VAPI_ASSISTANT_ID=M<Your VAPI assistant ID here>
+
+GEMINI_API_KEY=<Your Gemini API key here>
+GEMINI_MODEL=gemini-flash-latest
 EMBEDDING_MODEL=text-embedding-004
+INSIGHT_MODEL=gemini-2.0-flash
+DEMO_MODE=false
+
+QDRANT_URL=<Your Qdrant Endpoint URL here>
+QDRANT_API_KEY=<Your Qdrant Cluster ID here>
 BACKEND_CORS_ORIGINS=http://localhost:5173
 ```
 
-For Docker/Compose local setup, start from `.env.example` and keep:
+For Docker runs setup::
 
 ```env
-QDRANT_URL=http://qdrant:6333
-QDRANT_API_KEY=
 BACKEND_CORS_ORIGINS=http://localhost:8000
+```
+
+For Qdrant Cloud setup, use:
+
+```env
+QDRANT_URL=<your-qdrant-cloud-endpoint>
+QDRANT_API_KEY=<your-qdrant-cloud-api-key>
 ```
 
 ## Docker Quick Start (Recommended For Another PC)
@@ -99,7 +108,12 @@ docker compose up --build
 This starts:
 
 - `lifelens` app container (FastAPI + built frontend)
-- local `qdrant` container with persistent volume
+
+To also start a local `qdrant` container with persistent volume:
+
+```bash
+docker compose --profile local-qdrant up --build
+```
 
 ### Rebuild Only App Image
 

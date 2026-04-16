@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import math
 import uuid
 from datetime import datetime, timezone
@@ -13,6 +14,9 @@ from app.services.schemas import IntentAnalysis
 from app.services.settings import Settings
 
 
+logger = logging.getLogger(__name__)
+
+
 class MemoryService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -22,38 +26,48 @@ class MemoryService:
         if self.gemini_enabled:
             genai.configure(api_key=settings.gemini_api_key)
 
-        self.client = (
-            QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key, check_compatibility=False)
-            if settings.qdrant_url and settings.qdrant_api_key
-            else None
-        )
+        self.client = None
+        if settings.qdrant_url:
+            self.client = QdrantClient(
+                url=settings.qdrant_url,
+                api_key=settings.qdrant_api_key or None,
+                check_compatibility=False,
+            )
         self.local_memory: Dict[str, deque] = defaultdict(lambda: deque(maxlen=80))
 
     def ensure_collection(self) -> None:
         if self.client is None:
             return
-        existing = [c.name for c in self.client.get_collections().collections]
-        if self.collection_name not in existing:
-            self.client.create_collection(
-                collection_name=self.collection_name,
-                vectors_config=VectorParams(size=self.vector_size, distance=Distance.COSINE),
-            )
         try:
-            self.client.create_payload_index(
-                collection_name=self.collection_name,
-                field_name="user_id",
-                field_schema=PayloadSchemaType.KEYWORD,
+            existing = [c.name for c in self.client.get_collections().collections]
+            if self.collection_name not in existing:
+                self.client.create_collection(
+                    collection_name=self.collection_name,
+                    vectors_config=VectorParams(size=self.vector_size, distance=Distance.COSINE),
+                )
+            try:
+                self.client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name="user_id",
+                    field_schema=PayloadSchemaType.KEYWORD,
+                )
+            except Exception:
+                pass
+            try:
+                self.client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name="entry_type",
+                    field_schema=PayloadSchemaType.KEYWORD,
+                )
+            except Exception:
+                pass
+        except Exception as exc:
+            logger.warning(
+                "Qdrant initialization failed. Falling back to in-memory mode. "
+                "If using Qdrant Cloud, verify QDRANT_URL and QDRANT_API_KEY. Error: %s",
+                exc,
             )
-        except Exception:
-            pass
-        try:
-            self.client.create_payload_index(
-                collection_name=self.collection_name,
-                field_name="entry_type",
-                field_schema=PayloadSchemaType.KEYWORD,
-            )
-        except Exception:
-            pass
+            self.client = None
 
     def _hash_embedding(self, text: str) -> List[float]:
         digest = hashlib.sha256(text.encode("utf-8")).digest()
