@@ -76,6 +76,38 @@ EMBEDDING_MODEL=text-embedding-004
 BACKEND_CORS_ORIGINS=http://localhost:5173
 ```
 
+For Docker/Compose local setup, start from `.env.example` and keep:
+
+```env
+QDRANT_URL=http://qdrant:6333
+QDRANT_API_KEY=
+BACKEND_CORS_ORIGINS=http://localhost:8000
+```
+
+## Docker Quick Start (Recommended For Another PC)
+
+1. Install Docker Desktop.
+2. Copy `.env.example` to `.env` and fill required keys (`GEMINI_API_KEY`, and Vapi keys if using live voice).
+3. From `lifelens/` run:
+
+```bash
+docker compose up --build
+```
+
+4. Open `http://localhost:8000`.
+
+This starts:
+
+- `lifelens` app container (FastAPI + built frontend)
+- local `qdrant` container with persistent volume
+
+### Rebuild Only App Image
+
+```bash
+docker build -t lifelens:latest .
+docker run --rm -p 8000:8000 --env-file .env lifelens:latest
+```
+
 ## Backend Setup
 
 ```bash

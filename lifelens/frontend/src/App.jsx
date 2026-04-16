@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import AmbientBackground from "./components/AmbientBackground";
 import AuthModal from "./components/AuthModal";
 import Dashboard from "./pages/Dashboard";
 import LandingPage from "./pages/LandingPage";
@@ -33,6 +34,7 @@ export default function App() {
 
   return (
     <>
+      <AmbientBackground />
       <div className="noise-layer" />
       {!session && <LandingPage onStartTalking={() => setAuthOpen(true)} />}
       {session && <Dashboard session={session} onLogout={logout} />}

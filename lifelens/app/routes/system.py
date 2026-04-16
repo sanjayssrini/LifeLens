@@ -7,6 +7,7 @@ router = APIRouter(tags=["system"])
 class DemoRequest(BaseModel):
     message: str
     user_id: str = "demo_user"
+    demo_mode: bool = True
 
 
 class ChatRequest(BaseModel):
@@ -14,6 +15,7 @@ class ChatRequest(BaseModel):
     user_id: str = ""
     session_token: str = ""
     source: str = "chat-ui"
+    demo_mode: bool = False
 
 
 class SignupRequest(BaseModel):
@@ -68,13 +70,18 @@ def get_config(request: Request) -> dict:
         "vapi_assistant_id": settings.vapi_assistant_id,
         "has_gemini": bool(settings.gemini_api_key),
         "has_qdrant": bool(settings.qdrant_url and settings.qdrant_api_key),
+        "demo_mode": bool(settings.demo_mode),
     }
 
 
 @router.post("/demo-run")
 def demo_run(payload: DemoRequest, request: Request) -> dict:
     handler = request.app.state.vapi_handler
-    return handler.process_text_input(payload.message, user_id=payload.user_id, metadata={"source": "frontend-demo"})
+    return handler.process_text_input(
+        payload.message,
+        user_id=payload.user_id,
+        metadata={"source": "frontend-demo", "demo_mode": bool(payload.demo_mode)},
+    )
 
 
 @router.post("/chat")
@@ -91,6 +98,7 @@ def chat(payload: ChatRequest, request: Request) -> dict:
         user_id=resolved_user,
         message=payload.message,
         source=payload.source,
+        demo_mode=payload.demo_mode,
     )
 
 

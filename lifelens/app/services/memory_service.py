@@ -46,6 +46,14 @@ class MemoryService:
             )
         except Exception:
             pass
+        try:
+            self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name="entry_type",
+                field_schema=PayloadSchemaType.KEYWORD,
+            )
+        except Exception:
+            pass
 
     def _hash_embedding(self, text: str) -> List[float]:
         digest = hashlib.sha256(text.encode("utf-8")).digest()
@@ -81,6 +89,7 @@ class MemoryService:
             "transcript": transcript,
             "intent": intent.model_dump(),
             "metadata": metadata,
+            "entry_type": "interaction",
         }
         self.local_memory[user_id].append(local_payload)
 
@@ -93,6 +102,7 @@ class MemoryService:
             "transcript": transcript,
             "intent": intent.model_dump(),
             "metadata": metadata,
+            "entry_type": "interaction",
         }
         self.client.upsert(
             collection_name=self.collection_name,
@@ -164,6 +174,7 @@ class MemoryService:
             "preferences": preferences or {},
             "metadata": metadata or {},
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "entry_type": "memory",
         }
         self.local_memory[user_id].append(entry)
 
@@ -217,6 +228,66 @@ class MemoryService:
 
     def clear_user_memory(self, user_id: str) -> None:
         self.local_memory[user_id].clear()
+
+    def store_insight(
+        self,
+        user_id: str,
+        message: str,
+        insight_payload: Dict[str, Any],
+        metadata: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        entry = {
+            "user_id": user_id,
+            "transcript": message,
+            "insight": insight_payload,
+            "metadata": metadata or {},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "entry_type": "life_insight",
+        }
+        self.local_memory[user_id].append(entry)
+
+        if self.client is None:
+            return entry
+
+        vector = self.embed(f"{message} {' '.join(insight_payload.get('insights', []))}")
+        self.client.upsert(
+            collection_name=self.collection_name,
+            points=[
+                PointStruct(
+                    id=str(uuid.uuid4()),
+                    vector=vector,
+                    payload=entry,
+                )
+            ],
+        )
+        return entry
+
+    def recent_insights(self, user_id: str, limit: int = 3) -> List[Dict[str, Any]]:
+        insights: List[Dict[str, Any]] = []
+
+        if self.client is not None:
+            try:
+                records, _ = self.client.scroll(
+                    collection_name=self.collection_name,
+                    scroll_filter=Filter(
+                        must=[
+                            FieldCondition(key="user_id", match=MatchValue(value=user_id)),
+                            FieldCondition(key="entry_type", match=MatchValue(value="life_insight")),
+                        ]
+                    ),
+                    limit=max(1, limit),
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                insights = [record.payload for record in records if record.payload]
+            except Exception:
+                insights = []
+
+        if not insights:
+            local_items = list(self.local_memory[user_id])
+            insights = [item for item in local_items if item.get("entry_type") == "life_insight"]
+
+        return insights[-limit:][::-1]
 
         if self.client is None:
             return

@@ -33,7 +33,7 @@ body {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  z-index: 0;
+  z-index: 1;
   opacity: 0.13;
   background-image: radial-gradient(circle, rgba(148, 163, 184, 0.32) 1px, transparent 1px);
   background-size: 26px 26px;
@@ -58,6 +58,18 @@ body {
 
 .title-font {
   font-family: "Outfit", sans-serif;
+}
+
+.hover-glow {
+  transition: box-shadow 220ms ease, transform 220ms ease, background-color 220ms ease;
+}
+
+.hover-glow:hover {
+  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.22), 0 14px 36px rgba(8, 47, 73, 0.34);
+}
+
+.press-soft:active {
+  transform: scale(0.97);
 }
 
 @keyframes gradientShift {

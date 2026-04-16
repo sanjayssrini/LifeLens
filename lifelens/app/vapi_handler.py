@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 
 from app.services.action_engine import ActionEngine
 from app.services.intent_engine import IntentCascadeEngine
+from app.services.life_insight_service import LifeInsightService
 from app.services.memory_service import MemoryService
 from app.services.schemas import ActionResult, VapiEvent, VapiToolCall
 from app.services.state_store import StateStore
@@ -16,12 +17,14 @@ class VapiHandler:
         intent_engine: IntentCascadeEngine,
         action_engine: ActionEngine,
         memory_service: MemoryService,
+        insight_service: LifeInsightService,
         state_store: StateStore,
         user_service: UserService | None = None,
     ) -> None:
         self.intent_engine = intent_engine
         self.action_engine = action_engine
         self.memory_service = memory_service
+        self.insight_service = insight_service
         self.state_store = state_store
         self.user_service = user_service
         self._last_voice_memory: Dict[str, tuple[str, float]] = {}
@@ -162,6 +165,24 @@ class VapiHandler:
             action_results=action_results,
         )
 
+        memory_lines = [str(hit.get("transcript", ""))[:180] for hit in memory_hits if hit.get("transcript")]
+        is_demo_mode = bool(metadata.get("demo_mode", False))
+        insight = self.insight_service.generate(
+            message=text,
+            reply=response_text,
+            memory_lines=memory_lines,
+            intent=intent,
+            demo_mode=is_demo_mode,
+        )
+        insight_payload = insight.model_dump()
+        if insight_payload.get("summary"):
+            self.memory_service.store_insight(
+                user_id=user_id,
+                message=text,
+                insight_payload=insight_payload,
+                metadata={"source": metadata.get("source", "vapi-webhook"), "mode": "voice"},
+            )
+
         self.memory_service.store_interaction(
             user_id=user_id,
             transcript=text,
@@ -182,6 +203,9 @@ class VapiHandler:
             "intent": intent.model_dump(),
             "actions": [a.model_dump() for a in action_results],
             "memory_hits": memory_hits,
+            "life_insight": insight_payload,
+            "recommended_actions": insight_payload.get("recommended_actions", []),
+            "demo_mode": is_demo_mode,
         }
 
     def handle_webhook(self, payload: Dict[str, Any]) -> Dict[str, Any]:

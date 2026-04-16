@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const WELCOME_MESSAGE = {
   id: "welcome",
@@ -17,8 +17,21 @@ export function useSupportChat({ onAssistantReply } = {}) {
   const [lastModel, setLastModel] = useState("");
   const [memoryUsed, setMemoryUsed] = useState(false);
   const [lastLatencyMs, setLastLatencyMs] = useState(0);
+  const [lifeInsight, setLifeInsight] = useState(null);
+  const [recentInsights, setRecentInsights] = useState([]);
+  const [recommendedActions, setRecommendedActions] = useState([]);
+  const [insightPending, setInsightPending] = useState(false);
   const queueRef = useRef([]);
   const processingRef = useRef(false);
+  const insightTimerRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (insightTimerRef.current) {
+        clearTimeout(insightTimerRef.current);
+      }
+    };
+  }, []);
 
   const processNext = useCallback(async () => {
     if (processingRef.current) {
@@ -42,7 +55,8 @@ export function useSupportChat({ onAssistantReply } = {}) {
           message: next.message,
           user_id: next.userId || "",
           session_token: next.sessionToken || "",
-          source: next.source
+          source: next.source,
+          demo_mode: Boolean(next.demoMode)
         })
       });
 
@@ -54,6 +68,8 @@ export function useSupportChat({ onAssistantReply } = {}) {
       setLastModel(String(data.model_used || ""));
       setMemoryUsed(Boolean(data.memory_used));
       setLastLatencyMs(Number(data.processing_ms || 0));
+      setRecommendedActions(Array.isArray(data.recommended_actions) ? data.recommended_actions : []);
+      setRecentInsights(Array.isArray(data.recent_insights) ? data.recent_insights.filter(Boolean) : []);
 
       const assistantText = (data.reply || "I am still here with you. Please try that again.").trim();
       setMessages((current) => [
@@ -70,6 +86,20 @@ export function useSupportChat({ onAssistantReply } = {}) {
         }
       ]);
       onAssistantReply?.(assistantText);
+
+      if (insightTimerRef.current) {
+        clearTimeout(insightTimerRef.current);
+      }
+      const incomingInsight = data.life_insight && data.life_insight.summary ? data.life_insight : null;
+      if (incomingInsight) {
+        setInsightPending(true);
+        insightTimerRef.current = setTimeout(() => {
+          setLifeInsight(incomingInsight);
+          setInsightPending(false);
+        }, data.demo_mode ? 320 : 820);
+      } else {
+        setInsightPending(false);
+      }
 
       if (next.userId) {
         fetch("/api/memory/store", {
@@ -131,7 +161,8 @@ export function useSupportChat({ onAssistantReply } = {}) {
       message: trimmed,
       source,
       userId: options.userId || "",
-      sessionToken: options.sessionToken || ""
+      sessionToken: options.sessionToken || "",
+      demoMode: Boolean(options.demoMode)
     });
     processNext();
   }, [processNext]);
@@ -142,6 +173,13 @@ export function useSupportChat({ onAssistantReply } = {}) {
     setLastModel("");
     setMemoryUsed(false);
     setLastLatencyMs(0);
+    setLifeInsight(null);
+    setRecentInsights([]);
+    setRecommendedActions([]);
+    setInsightPending(false);
+    if (insightTimerRef.current) {
+      clearTimeout(insightTimerRef.current);
+    }
   }, []);
 
   return useMemo(
@@ -152,9 +190,26 @@ export function useSupportChat({ onAssistantReply } = {}) {
       lastModel,
       memoryUsed,
       lastLatencyMs,
+      lifeInsight,
+      recentInsights,
+      recommendedActions,
+      insightPending,
       sendMessage,
       resetChat
     }),
-    [messages, isThinking, error, lastModel, memoryUsed, lastLatencyMs, sendMessage, resetChat],
+    [
+      messages,
+      isThinking,
+      error,
+      lastModel,
+      memoryUsed,
+      lastLatencyMs,
+      lifeInsight,
+      recentInsights,
+      recommendedActions,
+      insightPending,
+      sendMessage,
+      resetChat,
+    ],
   );
 }

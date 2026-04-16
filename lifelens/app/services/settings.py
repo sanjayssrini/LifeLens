@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
     gemini_model: str = Field(default="gemma-4-26b-it", alias="GEMINI_MODEL")
     embedding_model: str = Field(default="text-embedding-004", alias="EMBEDDING_MODEL")
+    insight_model: str = Field(default="gemini-2.0-flash", alias="INSIGHT_MODEL")
+    demo_mode: bool = Field(default=False, alias="DEMO_MODE")
 
     backend_cors_origins: str = Field(default="http://localhost:5173", alias="BACKEND_CORS_ORIGINS")
 

@@ -46,6 +46,7 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
   const [config, setConfig] = useState({ apiKey: "", assistantId: "" });
   const [mode, setMode] = useState("vapi");
   const [browserSupported, setBrowserSupported] = useState(false);
+  const [activity, setActivity] = useState("idle");
 
   useEffect(() => {
     let isMounted = true;
@@ -92,6 +93,7 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
       setConnected(true);
       setConnecting(false);
       setMode("browser");
+      setActivity("listening");
       setStatus("Connected in browser voice mode");
       setError("");
     };
@@ -99,6 +101,7 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
     recognition.onend = () => {
       setConnected(false);
       setConnecting(false);
+      setActivity("idle");
       setStatus("Browser voice mode ended");
     };
 
@@ -106,6 +109,7 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
       setError(event.error || "Browser speech mode failed");
       setConnected(false);
       setConnecting(false);
+      setActivity("idle");
     };
 
     recognition.onresult = (event) => {
@@ -116,6 +120,7 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
         }
 
         setUserTranscript(transcript);
+        setActivity("listening");
         setMessages((current) => [
           ...current,
           {
@@ -171,6 +176,7 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
     vapi.on("call-start", () => {
       setConnected(true);
       setConnecting(false);
+      setActivity("listening");
       setStatus("Connected to LifeLens voice agent");
       setError("");
     });
@@ -178,6 +184,7 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
     vapi.on("call-end", () => {
       setConnected(false);
       setConnecting(false);
+      setActivity("idle");
       setStatus("Voice session ended");
       setUserTranscript("");
       if (transcriptDebounceRef.current) {
@@ -207,6 +214,7 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
 
       if (role === "user") {
         setUserTranscript(transcript);
+        setActivity("listening");
 
         const now = Date.now();
         const lastStored = lastStoredVoiceMemoryRef.current;
@@ -243,6 +251,7 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
         }, 900);
       } else if (role === "assistant") {
         setAssistantTranscript(transcript);
+        setActivity("speaking");
       }
     });
   }, [onFinalTranscript, sessionToken, userId]);
@@ -254,6 +263,7 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
 
     if (!ready && browserSupported && browserRecognitionRef.current) {
       setConnecting(true);
+      setActivity("thinking");
       setStatus("Starting browser voice mode...");
       try {
         browserRecognitionRef.current.start();
@@ -271,6 +281,7 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
 
     try {
       setConnecting(true);
+      setActivity("thinking");
       setStatus("Connecting to voice agent...");
       setError("");
       setMode("vapi");
@@ -301,6 +312,7 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
         }
       }
       setConnecting(false);
+      setActivity("idle");
       setStatus("Voice session failed to start");
       setError(connectError?.message || "Unable to start Vapi call");
     }
@@ -344,6 +356,7 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
       status,
       error,
       mode,
+      activity,
       assistantTranscript,
       userTranscript,
       messages,
@@ -351,6 +364,20 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
       disconnect,
       toggle
     }),
-    [ready, connected, connecting, status, error, mode, assistantTranscript, userTranscript, messages, connect, disconnect, toggle]
+    [
+      ready,
+      connected,
+      connecting,
+      status,
+      error,
+      mode,
+      activity,
+      assistantTranscript,
+      userTranscript,
+      messages,
+      connect,
+      disconnect,
+      toggle,
+    ]
   );
 }

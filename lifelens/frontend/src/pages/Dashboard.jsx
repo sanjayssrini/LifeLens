@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 
+import ActionCards from "../components/ActionCards";
+import LifeInsightCard from "../components/LifeInsightCard";
+import TypingIndicator from "../components/TypingIndicator";
 import VoiceOrb from "../components/VoiceOrb";
 import { useSpeechPlayback } from "../hooks/useSpeechPlayback";
 import { useSupportChat } from "../hooks/useSupportChat";
@@ -12,6 +15,7 @@ export default function Dashboard({ session, onLogout }) {
   const [input, setInput] = useState("");
   const [showChat, setShowChat] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [demoMode, setDemoMode] = useState(false);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsError, setSettingsError] = useState("");
   const [profile, setProfile] = useState({
@@ -30,10 +34,60 @@ export default function Dashboard({ session, onLogout }) {
   });
 
   const isVoiceActive = voice.connected || voice.connecting || speech.speaking;
+  const orbState = speech.speaking || voice.activity === "speaking"
+    ? "speaking"
+    : (chat.isThinking || voice.activity === "thinking" || chat.insightPending)
+      ? "thinking"
+      : (voice.connected || voice.connecting || voice.activity === "listening")
+        ? "listening"
+        : "idle";
+
+  const memoryHighlights = useMemo(
+    () => (profile.memory || [])
+      .map((item) => (item?.content || item?.transcript || "").trim())
+      .filter((item) => item.length > 8)
+      .slice(-5)
+      .reverse()
+      .map((item) => {
+        if (/money|debt|rent|bill|financial/i.test(item)) {
+          return "You have been carrying money-related stress lately.";
+        }
+        if (/job|interview|career|laid off|unemployed/i.test(item)) {
+          return "You were actively looking for work opportunities.";
+        }
+        if (/hospital|health|pain|doctor|medical/i.test(item)) {
+          return "Health concerns came up as an important theme for you.";
+        }
+        if (/anxious|anxiety|stressed|overwhelmed|burnout/i.test(item)) {
+          return "You shared moments of emotional pressure and overwhelm.";
+        }
+        return `You mentioned: ${item}`;
+      }),
+    [profile.memory],
+  );
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [chat.messages, chat.isThinking]);
+
+  useEffect(() => {
+    let mounted = true;
+    fetch("/api/config")
+      .then((response) => response.json())
+      .then((config) => {
+        if (!mounted) {
+          return;
+        }
+        setDemoMode(Boolean(config.demo_mode));
+      })
+      .catch(() => {
+        // Use default local toggle value.
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const loadProfile = async () => {
     setSettingsLoading(true);
@@ -93,6 +147,7 @@ export default function Dashboard({ session, onLogout }) {
     chat.sendMessage(text, "text", {
       userId: session?.user?.user_id,
       sessionToken: session?.session_token,
+      demoMode,
     });
   };
 
@@ -100,6 +155,7 @@ export default function Dashboard({ session, onLogout }) {
     chat.sendMessage(text, "quick-start", {
       userId: session?.user?.user_id,
       sessionToken: session?.session_token,
+      demoMode,
     });
   };
 
@@ -130,7 +186,7 @@ export default function Dashboard({ session, onLogout }) {
           <button
             type="button"
             onClick={onLogout}
-            className="rounded-full border border-white/20 bg-white/[0.06] px-4 py-2 text-sm text-slate-200 backdrop-blur-xl hover:bg-white/[0.12]"
+            className="hover-glow press-soft rounded-full border border-white/20 bg-white/[0.06] px-4 py-2 text-sm text-slate-200 backdrop-blur-xl hover:bg-white/[0.12]"
           >
             Logout
           </button>
@@ -141,24 +197,31 @@ export default function Dashboard({ session, onLogout }) {
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(34,211,238,0.18),transparent_45%)]" />
 
         <div className="relative z-10 flex flex-col items-center gap-6">
-          <div className="flex items-center gap-3 rounded-full border border-cyan-200/20 bg-cyan-400/10 px-4 py-2 text-xs uppercase tracking-[0.24em] text-cyan-100">
+          <div className="flex flex-wrap items-center justify-center gap-3 rounded-full border border-cyan-200/20 bg-cyan-400/10 px-4 py-2 text-xs uppercase tracking-[0.24em] text-cyan-100">
             <span>Live</span>
             <motion.span
               className="inline-flex h-3 w-3 rounded-full border border-cyan-200/70"
               animate={isVoiceActive ? { scale: [1, 1.3, 1], opacity: [0.55, 1, 0.55] } : { scale: 1, opacity: 0.5 }}
               transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
             />
+            <button
+              type="button"
+              onClick={() => setDemoMode((current) => !current)}
+              className={`hover-glow press-soft rounded-full px-3 py-1 text-[10px] tracking-[0.18em] ${demoMode ? "bg-emerald-300/25 text-emerald-100" : "bg-white/10 text-slate-200"}`}
+            >
+              {demoMode ? "Demo Mode On" : "Demo Mode Off"}
+            </button>
           </div>
 
-          <VoiceOrb active={isVoiceActive} />
+          <VoiceOrb state={orbState} />
 
           <motion.button
             type="button"
             onClick={voice.toggle}
             disabled={!voice.ready && !voice.connected && !voice.connecting}
             whileHover={{ scale: 1.03 }}
-            whileTap={{ scale: 0.96 }}
-            className={`rounded-full px-10 py-4 text-lg font-semibold transition ${
+            whileTap={{ scale: 0.95 }}
+            className={`hover-glow press-soft rounded-full px-10 py-4 text-lg font-semibold transition ${
               voice.connected || voice.connecting
                 ? "bg-gradient-to-r from-rose-400 to-pink-500 text-slate-950"
                 : "bg-gradient-to-r from-cyan-400 to-blue-500 text-slate-950"
@@ -169,6 +232,19 @@ export default function Dashboard({ session, onLogout }) {
 
           <p className="text-sm text-slate-300">{voice.status}</p>
           {voice.error && <p className="text-xs text-rose-300">{voice.error}</p>}
+
+          <LifeInsightCard insight={chat.lifeInsight} pending={chat.insightPending || chat.isThinking} />
+
+          <div className="w-full max-w-2xl">
+            <ActionCards
+              title="Action Momentum"
+              actions={(chat.recommendedActions || []).map((item) => ({
+                action: item,
+                status: "queued",
+                details: "Prepared from your latest Life Insight.",
+              }))}
+            />
+          </div>
         </div>
 
         <div className="absolute bottom-4 left-4 max-w-xs rounded-2xl border border-white/15 bg-white/[0.08] p-3 text-xs text-slate-200 backdrop-blur-xl">
@@ -184,7 +260,7 @@ export default function Dashboard({ session, onLogout }) {
         <button
           type="button"
           onClick={() => setShowChat(true)}
-          className="absolute right-6 top-6 rounded-full border border-white/20 bg-white/[0.08] px-4 py-2 text-sm text-slate-100 backdrop-blur-xl hover:bg-white/[0.16]"
+          className="hover-glow press-soft absolute right-6 top-6 rounded-full border border-white/20 bg-white/[0.08] px-4 py-2 text-sm text-slate-100 backdrop-blur-xl hover:bg-white/[0.16]"
         >
           Continue in chat
         </button>
@@ -218,7 +294,7 @@ export default function Dashboard({ session, onLogout }) {
                   {message.content}
                 </div>
               ))}
-              {chat.isThinking && <p className="text-xs text-slate-300">LifeLens is thinking...</p>}
+              {(chat.isThinking || chat.insightPending) && <TypingIndicator />}
               <div ref={chatEndRef} />
             </div>
 
@@ -229,7 +305,7 @@ export default function Dashboard({ session, onLogout }) {
                     key={starter}
                     type="button"
                     onClick={() => quickSend(starter)}
-                    className="rounded-full border border-white/20 bg-white/[0.06] px-3 py-1 text-xs text-slate-200 hover:bg-white/[0.12]"
+                    className="hover-glow press-soft rounded-full border border-white/20 bg-white/[0.06] px-3 py-1 text-xs text-slate-200 hover:bg-white/[0.12]"
                   >
                     {starter}
                   </button>
@@ -247,7 +323,7 @@ export default function Dashboard({ session, onLogout }) {
                 <button
                   type="submit"
                   disabled={chat.isThinking}
-                  className="rounded-2xl bg-gradient-to-r from-cyan-400 to-blue-500 px-5 py-3 text-sm font-semibold text-slate-950 disabled:opacity-60"
+                  className="hover-glow press-soft rounded-2xl bg-gradient-to-r from-cyan-400 to-blue-500 px-5 py-3 text-sm font-semibold text-slate-950 disabled:opacity-60"
                 >
                   Send
                 </button>
@@ -285,27 +361,29 @@ export default function Dashboard({ session, onLogout }) {
 
               <section className="rounded-2xl border border-white/15 bg-white/[0.07] p-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-base font-semibold text-white">Memory Saved</h3>
+                  <h3 className="text-base font-semibold text-white">What LifeLens remembers about you</h3>
                   <button
                     type="button"
                     onClick={loadProfile}
                     disabled={settingsLoading}
-                    className="rounded-full border border-white/20 bg-white/[0.08] px-3 py-1 text-xs text-slate-200 hover:bg-white/[0.12] disabled:opacity-50"
+                    className="hover-glow press-soft rounded-full border border-white/20 bg-white/[0.08] px-3 py-1 text-xs text-slate-200 hover:bg-white/[0.12] disabled:opacity-50"
                   >
                     Refresh
                   </button>
                 </div>
 
                 <div className="mt-3 max-h-56 space-y-2 overflow-y-auto">
-                  {(profile.memory || []).length === 0 && (
-                    <p className="text-sm text-slate-400">No memory saved yet.</p>
+                  {memoryHighlights.length === 0 && (
+                    <p className="text-sm text-slate-400">I am still learning your context. Keep talking and I will remember what matters.</p>
                   )}
-                  {(profile.memory || []).map((item, index) => (
-                    <div key={`${index}-${item.content || "memory"}`} className="rounded-xl border border-white/10 bg-white/[0.05] p-3 text-xs">
-                      <p className="text-slate-100">{item.content || "-"}</p>
-                      <p className="mt-1 text-slate-400">Intent: {item.intent || "general"}</p>
+                  {memoryHighlights.map((item, index) => (
+                    <div key={`${index}-${item}`} className="rounded-xl border border-white/10 bg-white/[0.05] p-3 text-xs">
+                      <p className="text-slate-100">• {item}</p>
                     </div>
                   ))}
+                  {memoryHighlights.length > 0 && (
+                    <p className="pt-1 text-sm text-cyan-100/80">I will keep this in mind for your next conversations.</p>
+                  )}
                 </div>
               </section>
 
@@ -316,7 +394,7 @@ export default function Dashboard({ session, onLogout }) {
                   type="button"
                   onClick={clearMemory}
                   disabled={settingsLoading}
-                  className="mt-3 rounded-full bg-gradient-to-r from-rose-400 to-pink-500 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
+                  className="hover-glow press-soft mt-3 rounded-full bg-gradient-to-r from-rose-400 to-pink-500 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
                 >
                   Clear memory
                 </button>

@@ -43,3 +43,11 @@ class SystemState(BaseModel):
     ai_response: str = ""
     actions: List[ActionResult] = Field(default_factory=list)
     last_intent: Optional[IntentAnalysis] = None
+
+
+class LifeInsight(BaseModel):
+    summary: str = ""
+    insights: List[str] = Field(default_factory=list)
+    recommended_actions: List[str] = Field(default_factory=list)
+    confidence: float = 0.7
+    importance: Literal["low", "medium", "high"] = "medium"

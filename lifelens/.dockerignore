@@ -1,0 +1,23 @@
+# Git and local tooling
+.git
+.gitignore
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Env files
+.env
+
+# Editor/system
+.vscode/
+.DS_Store
+Thumbs.db
