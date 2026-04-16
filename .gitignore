@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+lifelens/.env
+lifelens/.env.local
+
+# Node
+lifelens/frontend/node_modules/
+lifelens/frontend/dist/
+
+# VSCode
+.vscode/
+
+# Logs
+*.log
