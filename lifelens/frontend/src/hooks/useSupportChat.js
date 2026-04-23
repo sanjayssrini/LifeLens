@@ -72,14 +72,16 @@ export function useSupportChat({ onAssistantReply } = {}) {
       setRecentInsights(Array.isArray(data.recent_insights) ? data.recent_insights.filter(Boolean) : []);
 
       const assistantText = (data.reply || "I am still here with you. Please try that again.").trim();
+      const responseId = String(data.response_id || `chat-${Date.now()}`);
       setMessages((current) => [
         ...current,
         {
-          id: `assistant-${Date.now()}`,
+          id: responseId,
           role: "assistant",
           content: assistantText,
           meta: {
             source: "lifelens",
+            responseId,
             urgency: data.intent?.urgency || "medium",
             latencyMs: Number(data.processing_ms || 0)
           }
@@ -182,6 +184,88 @@ export function useSupportChat({ onAssistantReply } = {}) {
     }
   }, []);
 
+  const sendFeedback = useCallback(async (messageId, feedback, options = {}) => {
+    const normalizedFeedback = feedback === "positive" ? "positive" : "negative";
+
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === messageId
+          ? {
+              ...message,
+              meta: {
+                ...(message.meta || {}),
+                feedbackStatus: "sending",
+                feedback: normalizedFeedback
+              }
+            }
+          : message,
+      ),
+    );
+
+    try {
+      const response = await fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: options.userId || "",
+          session_token: options.sessionToken || "",
+          response_id: options.responseId || messageId,
+          feedback: normalizedFeedback,
+          metadata: options.metadata || {}
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error("Feedback failed");
+      }
+
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === messageId
+            ? {
+                ...message,
+                meta: {
+                  ...(message.meta || {}),
+                  feedbackStatus: "sent",
+                  feedback: normalizedFeedback
+                }
+              }
+            : message,
+        ),
+      );
+
+      window.setTimeout(() => {
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === messageId
+              ? {
+                  ...message,
+                  meta: {
+                    ...(message.meta || {}),
+                    feedbackHidden: true
+                  }
+                }
+              : message,
+          ),
+        );
+      }, 2600);
+    } catch {
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === messageId
+            ? {
+                ...message,
+                meta: {
+                  ...(message.meta || {}),
+                  feedbackStatus: "idle"
+                }
+              }
+            : message,
+        ),
+      );
+    }
+  }, []);
+
   return useMemo(
     () => ({
       messages,
@@ -195,6 +279,7 @@ export function useSupportChat({ onAssistantReply } = {}) {
       recommendedActions,
       insightPending,
       sendMessage,
+      sendFeedback,
       resetChat
     }),
     [
@@ -209,6 +294,7 @@ export function useSupportChat({ onAssistantReply } = {}) {
       recommendedActions,
       insightPending,
       sendMessage,
+      sendFeedback,
       resetChat,
     ],
   );

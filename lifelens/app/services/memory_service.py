@@ -101,6 +101,7 @@ class MemoryService:
             "transcript": transcript,
             "intent": intent.model_dump(),
             "metadata": metadata,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "entry_type": "interaction",
         }
         client.upsert(
@@ -193,6 +194,37 @@ class MemoryService:
             return []
         except Exception as exc:
             raise RuntimeError("Failed to fetch recent user memory from Qdrant.") from exc
+
+    def store_feedback(
+        self,
+        user_id: str,
+        response_id: str,
+        feedback: str,
+        metadata: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        normalized_feedback = "positive" if feedback == "positive" else "negative"
+        entry = {
+            "user_id": user_id,
+            "response_id": response_id,
+            "feedback": normalized_feedback,
+            "metadata": metadata or {},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "entry_type": "feedback",
+            "reinforcement": "reinforce_pattern" if normalized_feedback == "positive" else "reduce_similar_suggestions",
+        }
+        client = self._require_client()
+        vector = self.embed(f"{response_id} {normalized_feedback} {entry['reinforcement']}")
+        client.upsert(
+            collection_name=self.collection_name,
+            points=[
+                PointStruct(
+                    id=str(uuid.uuid4()),
+                    vector=vector,
+                    payload=entry,
+                )
+            ],
+        )
+        return entry
 
     def clear_user_memory(self, user_id: str) -> None:
         client = self._require_client()

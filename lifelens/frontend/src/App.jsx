@@ -35,8 +35,8 @@ export default function App() {
 
   return (
     <>
-      {session && <AmbientBackground />}
-      {session && <div className="noise-layer" />}
+      {!session && <AmbientBackground />}
+      {!session && <div className="noise-layer" />}
       {!session && <LandingPage onStartTalking={() => setAuthOpen(true)} />}
       {session && (
         <Suspense fallback={<div className="min-h-screen" />}>

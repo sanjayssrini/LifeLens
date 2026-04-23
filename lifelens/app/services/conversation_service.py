@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from time import perf_counter
 from typing import Any, Dict, List, Tuple
 
@@ -18,13 +19,15 @@ class ConversationService:
         self.memory_service = memory_service
         self.insight_service = insight_service
         self.enabled = bool(settings.gemini_api_key)
-        self.model_names = [
-            settings.gemini_model,
+        preferred_models = [
             "gemini-2.0-flash",
             "gemini-1.5-flash-latest",
             "gemini-1.5-flash",
             "gemini-1.5-flash-8b",
+            settings.gemini_model,
         ]
+        self.model_names = list(dict.fromkeys(model for model in preferred_models if model))
+        self._models: Dict[str, genai.GenerativeModel] = {}
 
         if self.enabled:
             genai.configure(api_key=settings.gemini_api_key)
@@ -39,8 +42,17 @@ class ConversationService:
         last_exception: Exception | None = None
         for model_name in self.model_names:
             try:
-                model = genai.GenerativeModel(model_name=model_name)
-                response = model.generate_content(prompt)
+                model = self._models.get(model_name)
+                if model is None:
+                    model = genai.GenerativeModel(model_name=model_name)
+                    self._models[model_name] = model
+                response = model.generate_content(
+                    prompt,
+                    generation_config={
+                        "temperature": 0.5,
+                        "max_output_tokens": 180,
+                    },
+                )
                 text = (response.text or "").strip()
                 if text:
                     return text, model_name
@@ -70,7 +82,8 @@ class ConversationService:
 
     def respond(self, user_id: str, message: str, source: str, demo_mode: bool = False) -> Dict[str, Any]:
         started = perf_counter()
-        memory_hits = self.memory_service.search_similar(message, user_id=user_id, limit=5)
+        response_id = str(uuid.uuid4())
+        memory_hits = self.memory_service.search_similar(message, user_id=user_id, limit=3)
         memory_lines = self._extract_memory_lines(memory_hits)
 
         style_line = (
@@ -82,7 +95,7 @@ class ConversationService:
             "You are LifeLens conversation mode."
             " Have a natural, human, supportive conversation."
             " Do NOT output intent labels or robotic structures."
-            " Keep it concise (60-120 words), practical, and emotionally intelligent."
+            " Keep it concise (45-90 words), practical, and emotionally intelligent."
             " If user is casual, respond casually. If user is distressed, be supportive and actionable."
             " If user uses profanity, de-escalate and stay helpful."
             f" {style_line}"
@@ -125,12 +138,14 @@ class ConversationService:
                 "source": source,
                 "mode": "gemini-conversation",
                 "reply": reply,
+                "response_id": response_id,
                 "model_used": model_used,
                 "demo_mode": bool(demo_mode or self.settings.demo_mode),
             },
         )
 
         return {
+            "response_id": response_id,
             "reply": reply,
             "memory_hits": memory_hits,
             "memory_used": bool(memory_lines),
