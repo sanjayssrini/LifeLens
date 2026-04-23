@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from app.routes.system import router as system_router
 from app.routes.vapi import router as vapi_router
 from app.services.action_engine import ActionEngine
-from app.services.conversation_service import ConversationService
+from app.services.chat_service import ChatService
 from app.services.intent_engine import IntentCascadeEngine
 from app.services.life_insight_service import LifeInsightService
 from app.services.memory_service import MemoryService
@@ -46,7 +46,7 @@ def create_app() -> FastAPI:
         state_store=state_store,
         user_service=user_service,
     )
-    conversation_service = ConversationService(
+    chat_service = ChatService(
         settings=settings,
         memory_service=memory_service,
         insight_service=insight_service,
@@ -54,7 +54,8 @@ def create_app() -> FastAPI:
 
     app.state.state_store = state_store
     app.state.vapi_handler = vapi_handler
-    app.state.conversation_service = conversation_service
+    app.state.chat_service = chat_service
+    app.state.conversation_service = chat_service
     app.state.user_service = user_service
     app.state.session_service = session_service
     app.state.memory_service = memory_service
