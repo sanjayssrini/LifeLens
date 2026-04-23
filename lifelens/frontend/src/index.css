@@ -21,8 +21,8 @@ body {
     radial-gradient(circle at 14% 18%, rgba(45, 212, 191, 0.18), transparent 34%),
     radial-gradient(circle at 86% 22%, rgba(56, 189, 248, 0.16), transparent 36%),
     linear-gradient(132deg, var(--bg-0), var(--bg-1) 44%, var(--bg-2));
-  background-size: 125% 125%;
-  animation: gradientShift 18s ease-in-out infinite;
+  background-size: 120% 120%;
+  background-attachment: fixed;
 }
 
 #root {
@@ -93,5 +93,15 @@ body {
   }
   100% {
     transform: translate3d(0, 0, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
   }
 }

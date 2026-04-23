@@ -303,15 +303,20 @@ class IntentCascadeEngine:
             if len(text) < 20:
                 return self._deterministic_support_reply(user_text, intent, memory_hits, action_results)
             lowered = text.lower()
-            has_memory_context = memory_context != "none"
             denied_memory = (
                 "don't have a memory" in lowered
                 or "do not have a memory" in lowered
                 or "i can't remember" in lowered
                 or "i cannot remember" in lowered
                 or "let's start fresh" in lowered
+                or "i don't have access to previous conversations" in lowered
+                or "i do not have access to previous conversations" in lowered
+                or "i don't have access to previous conversation" in lowered
+                or "i do not have access to previous conversation" in lowered
+                or "i can't access previous conversations" in lowered
+                or "i cannot access previous conversations" in lowered
             )
-            if has_memory_context and denied_memory:
+            if denied_memory:
                 return self._deterministic_support_reply(user_text, intent, memory_hits, action_results)
             return text
         except Exception:

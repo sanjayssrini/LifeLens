@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 
 import ActionCards from "../components/ActionCards";
@@ -27,7 +27,13 @@ export default function Dashboard({ session, onLogout }) {
   const chatEndRef = useRef(null);
 
   const speech = useSpeechPlayback();
-  const chat = useSupportChat({ onAssistantReply: speech.speak });
+  const handleAssistantReply = useCallback((text) => {
+    if (!showChat) {
+      return;
+    }
+    speech.speak(text);
+  }, [showChat, speech]);
+  const chat = useSupportChat({ onAssistantReply: handleAssistantReply });
   const voice = useVapiVoiceAgent({
     userId: session?.user?.user_id || "",
     sessionToken: session?.session_token || "",
@@ -69,6 +75,12 @@ export default function Dashboard({ session, onLogout }) {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [chat.messages, chat.isThinking]);
+
+  useEffect(() => {
+    if (!showChat) {
+      speech.stop();
+    }
+  }, [showChat, speech]);
 
   useEffect(() => {
     let mounted = true;
@@ -137,8 +149,7 @@ export default function Dashboard({ session, onLogout }) {
     }
   };
 
-  const onSend = async (event) => {
-    event.preventDefault();
+  const submitInput = () => {
     const text = input.trim();
     if (!text) {
       return;
@@ -149,6 +160,19 @@ export default function Dashboard({ session, onLogout }) {
       sessionToken: session?.session_token,
       demoMode,
     });
+  };
+
+  const onSend = async (event) => {
+    event.preventDefault();
+    submitInput();
+  };
+
+  const onInputKeyDown = (event) => {
+    if (event.key !== "Enter" || event.shiftKey) {
+      return;
+    }
+    event.preventDefault();
+    submitInput();
   };
 
   const quickSend = (text) => {
@@ -316,6 +340,7 @@ export default function Dashboard({ session, onLogout }) {
                 <textarea
                   value={input}
                   onChange={(event) => setInput(event.target.value)}
+                  onKeyDown={onInputKeyDown}
                   rows={2}
                   placeholder="Speak your mind. LifeLens is listening..."
                   className="w-full resize-none rounded-2xl border border-white/20 bg-white/[0.08] px-4 py-3 text-sm text-white outline-none ring-cyan-300/40 transition focus:ring"

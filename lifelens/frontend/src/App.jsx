@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 
 import AmbientBackground from "./components/AmbientBackground";
-import AuthModal from "./components/AuthModal";
-import Dashboard from "./pages/Dashboard";
 import LandingPage from "./pages/LandingPage";
+
+const AuthModal = lazy(() => import("./components/AuthModal"));
+const Dashboard = lazy(() => import("./pages/Dashboard"));
 
 const SESSION_KEY = "lifelens_session";
 
@@ -34,11 +35,17 @@ export default function App() {
 
   return (
     <>
-      <AmbientBackground />
-      <div className="noise-layer" />
+      {session && <AmbientBackground />}
+      {session && <div className="noise-layer" />}
       {!session && <LandingPage onStartTalking={() => setAuthOpen(true)} />}
-      {session && <Dashboard session={session} onLogout={logout} />}
-      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} onAuthenticated={handleAuthenticated} />
+      {session && (
+        <Suspense fallback={<div className="min-h-screen" />}>
+          <Dashboard session={session} onLogout={logout} />
+        </Suspense>
+      )}
+      <Suspense fallback={null}>
+        <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} onAuthenticated={handleAuthenticated} />
+      </Suspense>
     </>
   );
 }

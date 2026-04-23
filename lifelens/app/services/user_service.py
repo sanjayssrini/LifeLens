@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from threading import Lock
 from typing import Any, Dict, List
 
 from fastapi import HTTPException
@@ -15,22 +14,18 @@ class UserService:
         self.memory_service = memory_service
         self.client = memory_service.client
         self.collection_name = "users"
-        self._lock = Lock()
-        self._local_users_by_id: Dict[str, Dict[str, Any]] = {}
-        self._local_user_id_by_contact: Dict[str, str] = {}
 
     def ensure_collection(self) -> None:
-        if self.client is None:
-            return
-        existing = [c.name for c in self.client.get_collections().collections]
+        client = self._require_client()
+        existing = [c.name for c in client.get_collections().collections]
         if self.collection_name not in existing:
-            self.client.create_collection(
+            client.create_collection(
                 collection_name=self.collection_name,
                 vectors_config=VectorParams(size=self.memory_service.vector_size, distance=Distance.COSINE),
             )
         for field_name in ["user_id", "phone_or_email"]:
             try:
-                self.client.create_payload_index(
+                client.create_payload_index(
                     collection_name=self.collection_name,
                     field_name=field_name,
                     field_schema=PayloadSchemaType.KEYWORD,
@@ -42,9 +37,6 @@ class UserService:
         if self.client is None:
             raise HTTPException(status_code=503, detail="Qdrant is required for user storage.")
         return self.client
-
-    def _using_local_store(self) -> bool:
-        return self.client is None
 
     def _sanitize(self, value: str) -> str:
         return value.strip()
@@ -69,15 +61,6 @@ class UserService:
             "memory": [],
         }
 
-        if self._using_local_store():
-            with self._lock:
-                existing_user_id = self._local_user_id_by_contact.get(clean_contact)
-                if existing_user_id and existing_user_id in self._local_users_by_id:
-                    raise HTTPException(status_code=409, detail="User already exists. Please log in.")
-                self._local_users_by_id[user_id] = payload
-                self._local_user_id_by_contact[clean_contact] = user_id
-            return payload
-
         client = self._require_client()
         existing = self.find_by_contact(clean_contact)
         if existing:
@@ -91,14 +74,6 @@ class UserService:
 
     def find_by_contact(self, phone_or_email: str) -> Dict[str, Any] | None:
         clean_contact = self._sanitize(phone_or_email).lower()
-        if self._using_local_store():
-            with self._lock:
-                user_id = self._local_user_id_by_contact.get(clean_contact)
-                if not user_id:
-                    return None
-                user = self._local_users_by_id.get(user_id)
-                return dict(user) if user else None
-
         client = self._require_client()
         records, _ = client.scroll(
             collection_name=self.collection_name,
@@ -118,11 +93,6 @@ class UserService:
         if not parsed_user_id:
             return None
 
-        if self._using_local_store():
-            with self._lock:
-                user = self._local_users_by_id.get(parsed_user_id)
-                return dict(user) if user else None
-
         client = self._require_client()
         try:
             parsed_user_id = str(uuid.UUID(parsed_user_id))
@@ -140,21 +110,6 @@ class UserService:
         return points[0].payload
 
     def find_by_similarity(self, query: str, limit: int = 3) -> List[Dict[str, Any]]:
-        if self._using_local_store():
-            normalized = query.strip().lower()
-            if not normalized:
-                return []
-            with self._lock:
-                matches: List[Dict[str, Any]] = []
-                for user in self._local_users_by_id.values():
-                    name = str(user.get("name", "")).lower()
-                    contact = str(user.get("phone_or_email", "")).lower()
-                    if normalized in name or normalized in contact:
-                        matches.append(dict(user))
-                if matches:
-                    return matches[:limit]
-                return [dict(user) for user in list(self._local_users_by_id.values())[:limit]]
-
         client = self._require_client()
         vector = self.memory_service.embed(query)
         hits = client.search(
@@ -200,14 +155,6 @@ class UserService:
             vector = self.memory_service.embed(self._identity_text(str(user.get("name", "")), str(user.get("phone_or_email", ""))))
             payload_update["embedding"] = vector
 
-        if self._using_local_store():
-            with self._lock:
-                self._local_users_by_id[user_id] = payload_update
-                contact = str(payload_update.get("phone_or_email", "")).lower()
-                if contact:
-                    self._local_user_id_by_contact[contact] = user_id
-            return
-
         client = self._require_client()
 
         client.upsert(
@@ -229,11 +176,6 @@ class UserService:
             )
             payload_update["embedding"] = vector
 
-        if self._using_local_store():
-            with self._lock:
-                self._local_users_by_id[user_id] = payload_update
-            return
-
         client = self._require_client()
 
         client.upsert(
@@ -244,15 +186,6 @@ class UserService:
     def bulk_get_users(self, user_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         if not user_ids:
             return {}
-
-        if self._using_local_store():
-            with self._lock:
-                result: Dict[str, Dict[str, Any]] = {}
-                for user_id in user_ids:
-                    user = self._local_users_by_id.get(str(user_id).strip())
-                    if user:
-                        result[str(user.get("user_id", ""))] = dict(user)
-                return result
 
         client = self._require_client()
         records, _ = client.scroll(

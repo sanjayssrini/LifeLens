@@ -69,7 +69,7 @@ def get_config(request: Request) -> dict:
         "vapi_public_key": settings.vapi_public_key,
         "vapi_assistant_id": settings.vapi_assistant_id,
         "has_gemini": bool(settings.gemini_api_key),
-        "has_qdrant": bool(settings.qdrant_url and settings.qdrant_api_key),
+        "has_qdrant": bool(settings.qdrant_url),
         "demo_mode": bool(settings.demo_mode),
     }
 

@@ -1,9 +1,7 @@
 import hashlib
-import logging
 import math
 import uuid
 from datetime import datetime, timezone
-from collections import defaultdict, deque
 from typing import Any, Dict, List
 
 import google.generativeai as genai
@@ -12,9 +10,6 @@ from qdrant_client.models import Distance, FieldCondition, Filter, MatchValue, P
 
 from app.services.schemas import IntentAnalysis
 from app.services.settings import Settings
-
-
-logger = logging.getLogger(__name__)
 
 
 class MemoryService:
@@ -26,27 +21,31 @@ class MemoryService:
         if self.gemini_enabled:
             genai.configure(api_key=settings.gemini_api_key)
 
-        self.client = None
-        if settings.qdrant_url:
-            self.client = QdrantClient(
-                url=settings.qdrant_url,
-                api_key=settings.qdrant_api_key or None,
-                check_compatibility=False,
-            )
-        self.local_memory: Dict[str, deque] = defaultdict(lambda: deque(maxlen=80))
+        if not settings.qdrant_url:
+            raise RuntimeError("QDRANT_URL is required. Local memory storage is disabled.")
+
+        self.client = QdrantClient(
+            url=settings.qdrant_url,
+            api_key=settings.qdrant_api_key or None,
+            check_compatibility=False,
+        )
+
+    def _require_client(self) -> QdrantClient:
+        if self.client is None:
+            raise RuntimeError("Qdrant client is unavailable. Local memory storage is disabled.")
+        return self.client
 
     def ensure_collection(self) -> None:
-        if self.client is None:
-            return
+        client = self._require_client()
         try:
-            existing = [c.name for c in self.client.get_collections().collections]
+            existing = [c.name for c in client.get_collections().collections]
             if self.collection_name not in existing:
-                self.client.create_collection(
+                client.create_collection(
                     collection_name=self.collection_name,
                     vectors_config=VectorParams(size=self.vector_size, distance=Distance.COSINE),
                 )
             try:
-                self.client.create_payload_index(
+                client.create_payload_index(
                     collection_name=self.collection_name,
                     field_name="user_id",
                     field_schema=PayloadSchemaType.KEYWORD,
@@ -54,7 +53,7 @@ class MemoryService:
             except Exception:
                 pass
             try:
-                self.client.create_payload_index(
+                client.create_payload_index(
                     collection_name=self.collection_name,
                     field_name="entry_type",
                     field_schema=PayloadSchemaType.KEYWORD,
@@ -62,12 +61,9 @@ class MemoryService:
             except Exception:
                 pass
         except Exception as exc:
-            logger.warning(
-                "Qdrant initialization failed. Falling back to in-memory mode. "
-                "If using Qdrant Cloud, verify QDRANT_URL and QDRANT_API_KEY. Error: %s",
-                exc,
-            )
-            self.client = None
+            raise RuntimeError(
+                "Qdrant initialization failed. Verify QDRANT_URL and QDRANT_API_KEY."
+            ) from exc
 
     def _hash_embedding(self, text: str) -> List[float]:
         digest = hashlib.sha256(text.encode("utf-8")).digest()
@@ -98,18 +94,7 @@ class MemoryService:
             return self._hash_embedding(text)
 
     def store_interaction(self, user_id: str, transcript: str, intent: IntentAnalysis, metadata: Dict[str, Any]) -> None:
-        local_payload = {
-            "user_id": user_id,
-            "transcript": transcript,
-            "intent": intent.model_dump(),
-            "metadata": metadata,
-            "entry_type": "interaction",
-        }
-        self.local_memory[user_id].append(local_payload)
-
-        if self.client is None:
-            return
-
+        client = self._require_client()
         vector = self.embed(transcript)
         payload = {
             "user_id": user_id,
@@ -118,7 +103,7 @@ class MemoryService:
             "metadata": metadata,
             "entry_type": "interaction",
         }
-        self.client.upsert(
+        client.upsert(
             collection_name=self.collection_name,
             points=[
                 PointStruct(
@@ -129,31 +114,11 @@ class MemoryService:
             ],
         )
 
-    def _local_similarity_search(self, transcript: str, user_id: str, limit: int = 3) -> List[Dict[str, Any]]:
-        query_tokens = {token for token in transcript.lower().split() if len(token) > 2}
-        if not query_tokens:
-            return list(self.local_memory[user_id])[-limit:]
-
-        scored: List[tuple[float, Dict[str, Any]]] = []
-        for index, item in enumerate(self.local_memory[user_id]):
-            candidate = item.get("transcript", "")
-            candidate_tokens = {token for token in candidate.lower().split() if len(token) > 2}
-            overlap = len(query_tokens & candidate_tokens)
-            union = len(query_tokens | candidate_tokens) or 1
-            jaccard = overlap / union
-            recency_bonus = index / 1000
-            scored.append((jaccard + recency_bonus, item))
-
-        scored.sort(key=lambda pair: pair[0], reverse=True)
-        return [item for score, item in scored[:limit] if item.get("transcript") and score >= 0.12]
-
     def search_similar(self, transcript: str, user_id: str, limit: int = 3) -> List[Dict[str, Any]]:
-        if self.client is None:
-            return self._local_similarity_search(transcript, user_id, limit)
-
+        client = self._require_client()
         vector = self.embed(transcript)
         try:
-            hits = self.client.search(
+            hits = client.search(
                 collection_name=self.collection_name,
                 query_vector=vector,
                 limit=limit,
@@ -167,11 +132,9 @@ class MemoryService:
                 ),
             )
             payloads = [hit.payload for hit in hits if hit.payload and getattr(hit, "score", 0.0) >= 0.35]
-            if payloads:
-                return payloads
-            return self._local_similarity_search(transcript, user_id, limit)
-        except Exception:
-            return self._local_similarity_search(transcript, user_id, limit)
+            return payloads
+        except Exception as exc:
+            raise RuntimeError("Failed to retrieve similar memory from Qdrant.") from exc
 
     def store_memory_entry(
         self,
@@ -190,13 +153,9 @@ class MemoryService:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "entry_type": "memory",
         }
-        self.local_memory[user_id].append(entry)
-
-        if self.client is None:
-            return entry
-
+        client = self._require_client()
         vector = self.embed(content)
-        self.client.upsert(
+        client.upsert(
             collection_name=self.collection_name,
             points=[
                 PointStruct(
@@ -212,12 +171,9 @@ class MemoryService:
         return self.search_similar(transcript=query, user_id=user_id, limit=limit)
 
     def recent_user_memory(self, user_id: str, limit: int = 5) -> List[Dict[str, Any]]:
-        if self.client is None:
-            items = list(self.local_memory[user_id])
-            return items[-limit:][::-1]
-
+        client = self._require_client()
         try:
-            records, _ = self.client.scroll(
+            records, _ = client.scroll(
                 collection_name=self.collection_name,
                 scroll_filter=Filter(
                     must=[
@@ -234,14 +190,26 @@ class MemoryService:
             payloads = [record.payload for record in records if record.payload]
             if payloads:
                 return payloads[::-1]
-        except Exception:
-            pass
-
-        items = list(self.local_memory[user_id])
-        return items[-limit:][::-1]
+            return []
+        except Exception as exc:
+            raise RuntimeError("Failed to fetch recent user memory from Qdrant.") from exc
 
     def clear_user_memory(self, user_id: str) -> None:
-        self.local_memory[user_id].clear()
+        client = self._require_client()
+        try:
+            client.delete(
+                collection_name=self.collection_name,
+                points_selector=Filter(
+                    must=[
+                        FieldCondition(
+                            key="user_id",
+                            match=MatchValue(value=user_id),
+                        )
+                    ]
+                ),
+            )
+        except Exception as exc:
+            raise RuntimeError("Failed to clear user memory in Qdrant.") from exc
 
     def store_insight(
         self,
@@ -258,13 +226,9 @@ class MemoryService:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "entry_type": "life_insight",
         }
-        self.local_memory[user_id].append(entry)
-
-        if self.client is None:
-            return entry
-
+        client = self._require_client()
         vector = self.embed(f"{message} {' '.join(insight_payload.get('insights', []))}")
-        self.client.upsert(
+        client.upsert(
             collection_name=self.collection_name,
             points=[
                 PointStruct(
@@ -277,46 +241,21 @@ class MemoryService:
         return entry
 
     def recent_insights(self, user_id: str, limit: int = 3) -> List[Dict[str, Any]]:
-        insights: List[Dict[str, Any]] = []
-
-        if self.client is not None:
-            try:
-                records, _ = self.client.scroll(
-                    collection_name=self.collection_name,
-                    scroll_filter=Filter(
-                        must=[
-                            FieldCondition(key="user_id", match=MatchValue(value=user_id)),
-                            FieldCondition(key="entry_type", match=MatchValue(value="life_insight")),
-                        ]
-                    ),
-                    limit=max(1, limit),
-                    with_payload=True,
-                    with_vectors=False,
-                )
-                insights = [record.payload for record in records if record.payload]
-            except Exception:
-                insights = []
-
-        if not insights:
-            local_items = list(self.local_memory[user_id])
-            insights = [item for item in local_items if item.get("entry_type") == "life_insight"]
-
-        return insights[-limit:][::-1]
-
-        if self.client is None:
-            return
-
+        client = self._require_client()
         try:
-            self.client.delete(
+            records, _ = client.scroll(
                 collection_name=self.collection_name,
-                points_selector=Filter(
+                scroll_filter=Filter(
                     must=[
-                        FieldCondition(
-                            key="user_id",
-                            match=MatchValue(value=user_id),
-                        )
+                        FieldCondition(key="user_id", match=MatchValue(value=user_id)),
+                        FieldCondition(key="entry_type", match=MatchValue(value="life_insight")),
                     ]
                 ),
+                limit=max(1, limit),
+                with_payload=True,
+                with_vectors=False,
             )
-        except Exception:
-            pass
+            insights = [record.payload for record in records if record.payload]
+            return insights[-limit:][::-1]
+        except Exception as exc:
+            raise RuntimeError("Failed to fetch recent insights from Qdrant.") from exc
