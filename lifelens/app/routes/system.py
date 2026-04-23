@@ -151,7 +151,7 @@ def chat(payload: ChatRequest, request: Request) -> dict:
     if not resolved_user:
         resolved_user = "chat_user"
 
-    service = request.app.state.conversation_service
+    service = request.app.state.chat_service
     return service.respond(
         user_id=resolved_user,
         message=payload.message,

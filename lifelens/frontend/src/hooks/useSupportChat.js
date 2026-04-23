@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+const CHAT_REQUEST_TIMEOUT_MS = 25000;
+
 const WELCOME_MESSAGE = {
   id: "welcome",
   role: "assistant",
@@ -47,10 +49,14 @@ export function useSupportChat({ onAssistantReply } = {}) {
     setIsThinking(true);
     setError("");
 
+    let timeoutId = null;
     try {
+      const controller = new AbortController();
+      timeoutId = window.setTimeout(() => controller.abort(), CHAT_REQUEST_TIMEOUT_MS);
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           message: next.message,
           user_id: next.userId || "",
@@ -61,7 +67,14 @@ export function useSupportChat({ onAssistantReply } = {}) {
       });
 
       if (!response.ok) {
-        throw new Error("The assistant could not respond right now.");
+        let detail = "The assistant could not respond right now.";
+        try {
+          const errorPayload = await response.json();
+          detail = String(errorPayload?.detail || errorPayload?.message || detail);
+        } catch {
+          // Keep the default fallback message.
+        }
+        throw new Error(detail);
       }
 
       const data = await response.json();
@@ -102,39 +115,25 @@ export function useSupportChat({ onAssistantReply } = {}) {
       } else {
         setInsightPending(false);
       }
-
-      if (next.userId) {
-        fetch("/api/memory/store", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            user_id: next.userId,
-            content: next.message,
-            intent: "conversation",
-            preferences: {},
-            metadata: {
-              source: next.source,
-              session_token: next.sessionToken || "",
-              model_used: data.model_used || "",
-            }
-          })
-        }).catch(() => {
-          // Non-blocking memory write.
-        });
-      }
     } catch (sendError) {
-      const messageText = sendError?.message || "The assistant request failed.";
+      const isTimeout = sendError?.name === "AbortError";
+      const messageText = isTimeout
+        ? "The request took too long. Please try once more."
+        : (sendError?.message || "The assistant request failed.");
       setError(messageText);
       setMessages((current) => [
         ...current,
         {
           id: `assistant-error-${Date.now()}`,
           role: "assistant",
-          content: "I hit a connection issue. Please try again, I am still here.",
-          meta: { source: "fallback" }
+          content: messageText,
+          meta: { source: "fallback", error: true }
         }
       ]);
     } finally {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
       processingRef.current = false;
       setIsThinking(false);
       if (queueRef.current.length > 0) {

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import { useEffect, useMemo, useRef } from "react";
+import { motion, useMotionValue, useSpring, useTransform } from "framer-motion";
 
 function buildParticles() {
   return Array.from({ length: 8 }).map((_, index) => ({
@@ -13,10 +13,15 @@ function buildParticles() {
 }
 
 export default function AmbientBackground() {
-  const [pointer, setPointer] = useState({ x: 0, y: 0 });
   const rafRef = useRef(0);
   const latestRef = useRef({ x: 0, y: 0 });
   const particles = useMemo(() => buildParticles(), []);
+  const pointerX = useMotionValue(0);
+  const pointerY = useMotionValue(0);
+  const springX = useSpring(pointerX, { stiffness: 40, damping: 20, mass: 0.8 });
+  const springY = useSpring(pointerY, { stiffness: 40, damping: 20, mass: 0.8 });
+  const xShift = useTransform(springX, (value) => value * 12);
+  const yShift = useTransform(springY, (value) => value * 12);
 
   useEffect(() => {
     const handleMouseMove = (event) => {
@@ -28,7 +33,8 @@ export default function AmbientBackground() {
       }
       rafRef.current = window.requestAnimationFrame(() => {
         rafRef.current = 0;
-        setPointer(latestRef.current);
+        pointerX.set(latestRef.current.x);
+        pointerY.set(latestRef.current.y);
       });
     };
 
@@ -45,14 +51,9 @@ export default function AmbientBackground() {
     <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
       <motion.div
         className="absolute inset-[-20%] bg-[radial-gradient(circle_at_20%_20%,rgba(74,222,128,0.16),transparent_36%),radial-gradient(circle_at_80%_26%,rgba(56,189,248,0.18),transparent_34%),radial-gradient(circle_at_50%_85%,rgba(14,165,233,0.14),transparent_35%)]"
-        animate={{
-          x: pointer.x * 12,
-          y: pointer.y * 12,
-          scale: [1, 1.03, 1],
-        }}
+          style={{ x: xShift, y: yShift }}
+          animate={{ scale: [1, 1.03, 1] }}
         transition={{
-          x: { type: "spring", stiffness: 40, damping: 20 },
-          y: { type: "spring", stiffness: 40, damping: 20 },
           scale: { duration: 18, repeat: Infinity, ease: "easeInOut" },
         }}
       />

@@ -174,6 +174,7 @@ class MemoryService:
     def recent_user_memory(self, user_id: str, limit: int = 5) -> List[Dict[str, Any]]:
         client = self._require_client()
         try:
+            fetch_limit = max(24, max(1, limit) * 6)
             records, _ = client.scroll(
                 collection_name=self.collection_name,
                 scroll_filter=Filter(
@@ -184,13 +185,14 @@ class MemoryService:
                         )
                     ]
                 ),
-                limit=max(1, limit),
+                limit=fetch_limit,
                 with_payload=True,
                 with_vectors=False,
             )
             payloads = [record.payload for record in records if record.payload]
             if payloads:
-                return payloads[::-1]
+                payloads.sort(key=lambda item: str(item.get("timestamp") or ""), reverse=True)
+                return payloads[: max(1, limit)]
             return []
         except Exception as exc:
             raise RuntimeError("Failed to fetch recent user memory from Qdrant.") from exc

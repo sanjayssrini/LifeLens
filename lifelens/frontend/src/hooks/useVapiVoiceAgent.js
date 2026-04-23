@@ -55,12 +55,9 @@ function isFinalTranscriptMessage(message) {
 
 export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken = "" } = {}) {
   const vapiRef = useRef(null);
-  const browserRecognitionRef = useRef(null);
   const transcriptDebounceRef = useRef(null);
   const lastSubmittedTranscriptRef = useRef("");
-  const lastStoredVoiceMemoryRef = useRef({ text: "", ts: 0 });
   const desiredConnectionRef = useRef(false);
-  const activeModeRef = useRef("vapi");
   const micPermissionPromiseRef = useRef(null);
 
   const [ready, setReady] = useState(false);
@@ -72,8 +69,7 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
   const [error, setError] = useState("");
   const [messages, setMessages] = useState([]);
   const [config, setConfig] = useState({ apiKey: "", assistantId: "" });
-  const [mode, setMode] = useState("vapi");
-  const [browserSupported, setBrowserSupported] = useState(false);
+  const [mode] = useState("vapi");
   const [activity, setActivity] = useState("idle");
 
   const ensureMicrophoneAccess = useCallback(async () => {
@@ -129,105 +125,6 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
   }, []);
 
   useEffect(() => {
-    activeModeRef.current = mode;
-  }, [mode]);
-
-  useEffect(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    setBrowserSupported(Boolean(SpeechRecognition));
-
-    if (!SpeechRecognition) {
-      return;
-    }
-
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
-    recognition.lang = "en-US";
-
-    recognition.onstart = () => {
-      setConnected(true);
-      setConnecting(false);
-      setMode("browser");
-      setActivity("listening");
-      setStatus("Connected in browser voice mode");
-      setError("");
-    };
-
-    recognition.onend = () => {
-      if (desiredConnectionRef.current && activeModeRef.current === "browser") {
-        try {
-          window.setTimeout(() => {
-            try {
-              recognition.start();
-            } catch {
-              // Restart best-effort only.
-            }
-          }, 120);
-          return;
-        } catch {
-          // Fall through to ended state.
-        }
-      }
-
-      setConnected(false);
-      setConnecting(false);
-      setActivity("idle");
-      setStatus("Browser voice mode ended");
-    };
-
-    recognition.onerror = (event) => {
-      setError(event.error || "Browser speech mode failed");
-      setConnected(false);
-      setConnecting(false);
-      setActivity("idle");
-    };
-
-    recognition.onresult = (event) => {
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
-        const transcript = normalizeTranscript((event.results[index][0]?.transcript || "").trim());
-        if (!transcript) {
-          continue;
-        }
-
-        setUserTranscript(transcript);
-        if (!event.results[index].isFinal) {
-          setActivity("listening");
-          continue;
-        }
-
-        setActivity("processing");
-        setMessages((current) => [
-          ...current,
-          {
-            role: "user",
-            transcript,
-            timestamp: Date.now()
-          }
-        ].slice(-30));
-
-        if (lastSubmittedTranscriptRef.current === transcript) {
-          continue;
-        }
-        lastSubmittedTranscriptRef.current = transcript;
-        onFinalTranscript?.(transcript);
-      }
-    };
-
-    browserRecognitionRef.current = recognition;
-
-    return () => {
-      try {
-        recognition.stop();
-      } catch {
-        // Ignore teardown errors.
-      }
-      browserRecognitionRef.current = null;
-    };
-  }, [onFinalTranscript]);
-
-  useEffect(() => {
     return () => {
       desiredConnectionRef.current = false;
       if (transcriptDebounceRef.current) {
@@ -236,13 +133,6 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
       if (vapiRef.current) {
         try {
           vapiRef.current.stop();
-        } catch {
-          // Ignore cleanup errors.
-        }
-      }
-      if (browserRecognitionRef.current) {
-        try {
-          browserRecognitionRef.current.stop();
         } catch {
           // Ignore cleanup errors.
         }
@@ -299,29 +189,6 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
         setUserTranscript(transcript);
         setActivity("processing");
 
-        const now = Date.now();
-        const lastStored = lastStoredVoiceMemoryRef.current;
-        const isDuplicateMemory = lastStored.text === transcript && now - lastStored.ts < 8000;
-        if (userId && !isDuplicateMemory) {
-          lastStoredVoiceMemoryRef.current = { text: transcript, ts: now };
-          fetch("/api/memory/store", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              user_id: userId,
-              content: transcript,
-              intent: "voice_conversation",
-              preferences: {},
-              metadata: {
-                source: "vapi-live-transcript",
-                session_token: sessionToken || "",
-              }
-            })
-          }).catch(() => {
-            // Non-blocking write; voice session should continue even if memory write fails.
-          });
-        }
-
         if (transcriptDebounceRef.current) {
           clearTimeout(transcriptDebounceRef.current);
         }
@@ -337,7 +204,7 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
         setActivity("answering");
       }
     });
-  }, [onFinalTranscript, sessionToken, userId]);
+  }, [onFinalTranscript]);
 
   useEffect(() => {
     if (!ready || !config.apiKey || vapiRef.current) {
@@ -369,21 +236,11 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
       return;
     }
 
-    if (!ready && browserSupported && browserRecognitionRef.current) {
-      setConnecting(true);
-      setActivity("processing");
-      setStatus("Starting browser voice mode...");
-      try {
-        browserRecognitionRef.current.start();
-      } catch (browserError) {
-        setConnecting(false);
-        setError(browserError?.message || "Unable to start browser voice mode");
-      }
-      return;
-    }
-
     if (!ready) {
-      setError("Voice credentials not available and browser mode unsupported.");
+      setConnecting(false);
+      setActivity("idle");
+      setStatus("Vapi voice unavailable");
+      setError("Vapi voice is not configured right now. Chat is available for Gemini text responses.");
       return;
     }
 
@@ -392,7 +249,6 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
       setActivity("processing");
       setStatus("Connecting to voice agent...");
       setError("");
-      setMode("vapi");
 
       if (!vapiRef.current) {
         vapiRef.current = new Vapi(config.apiKey);
@@ -410,34 +266,15 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
         await vapiRef.current.start(config.assistantId);
       }
     } catch (connectError) {
-      if (browserSupported && browserRecognitionRef.current) {
-        try {
-          setStatus("Vapi unavailable, switching to browser voice mode...");
-          setMode("browser");
-          browserRecognitionRef.current.start();
-          return;
-        } catch {
-          // Continue to hard failure below.
-        }
-      }
       setConnecting(false);
       setActivity("idle");
       setStatus("Voice session failed to start");
       setError(connectError?.message || "Unable to start Vapi call");
     }
-  }, [browserSupported, config.assistantId, config.apiKey, connected, connecting, ensureMicrophoneAccess, ready, sessionToken, userId, wireEvents]);
+  }, [config.assistantId, config.apiKey, connected, connecting, ensureMicrophoneAccess, ready, sessionToken, userId, wireEvents]);
 
   const disconnect = useCallback(async () => {
     desiredConnectionRef.current = false;
-    if (mode === "browser" && browserRecognitionRef.current) {
-      try {
-        browserRecognitionRef.current.stop();
-        return;
-      } catch (disconnectError) {
-        setError(disconnectError?.message || "Unable to end browser voice mode");
-      }
-    }
-
     if (!vapiRef.current) {
       return;
     }

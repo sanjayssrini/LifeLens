@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 
-import { useSpeechPlayback } from "../hooks/useSpeechPlayback";
 import { useSupportChat } from "../hooks/useSupportChat";
 import { useVapiVoiceAgent } from "../hooks/useVapiVoiceAgent";
 
@@ -150,7 +149,7 @@ const orbConnectionBands = [
   { id: "band-3", width: "58%", height: "14%", rotate: "-4deg", delay: 0.42 },
 ];
 
-function ContinuityPrompt({ memory, onContinue, onFresh }) {
+function ContinuityPrompt({ memory, onContinue, onFresh, onDismiss }) {
   if (!memory) {
     return null;
   }
@@ -163,6 +162,15 @@ function ContinuityPrompt({ memory, onContinue, onFresh }) {
       transition={{ duration: 0.35, ease: "easeOut" }}
       className="fixed bottom-6 left-4 z-40 w-[min(21rem,calc(100vw-2rem))] rounded-2xl border border-cyan-100/18 bg-[#0b1323]/92 px-4 py-3 shadow-[0_16px_34px_rgba(2,8,23,0.4)] backdrop-blur-md sm:left-6"
     >
+      <div className="flex items-start justify-end">
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="rounded-full border border-white/12 bg-white/[0.05] px-2 py-0.5 text-xs text-slate-200/80 hover:bg-white/[0.1]"
+        >
+          Close
+        </button>
+      </div>
       <p className="text-sm text-slate-100">Last time, you were focusing on {memory.last_topic}.</p>
       <p className="mt-1 text-xs leading-5 text-slate-300/78">Want to continue?</p>
       <div className="mt-3 flex justify-start gap-2">
@@ -230,13 +238,141 @@ function FeedbackControls({ status, hidden, onFeedback }) {
   );
 }
 
+const ChatDrawer = memo(function ChatDrawer({
+  visible,
+  chat,
+  session,
+  thinkingText,
+  initialDraft,
+  onClose,
+  onDraftConsumed,
+}) {
+  const [inputValue, setInputValue] = useState(initialDraft || "");
+  const chatScrollRef = useRef(null);
+
+  useEffect(() => {
+    if (visible) {
+      setInputValue(initialDraft || "");
+    }
+  }, [initialDraft, visible]);
+
+  useEffect(() => {
+    if (!visible || !chatScrollRef.current) {
+      return;
+    }
+    chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+  }, [chat.messages, chat.isThinking, visible]);
+
+  const submitChat = useCallback(() => {
+    const text = inputValue.trim();
+    if (!text) {
+      return;
+    }
+
+    chat.sendMessage(text, "text", {
+      userId: session?.user?.user_id,
+      sessionToken: session?.session_token,
+      demoMode: false,
+    });
+    setInputValue("");
+    onDraftConsumed?.();
+  }, [chat, inputValue, onDraftConsumed, session?.session_token, session?.user?.user_id]);
+
+  if (!visible) {
+    return null;
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 12, scale: 0.98 }}
+      transition={{ duration: 0.5, ease: "easeInOut" }}
+      className="fixed bottom-24 right-5 z-40 w-[min(92vw,24rem)] overflow-hidden rounded-[1.2rem] border border-white/12 bg-[#0b1323]/95 shadow-[0_20px_52px_rgba(2,8,23,0.44)] backdrop-blur-md"
+    >
+      <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+        <div>
+          <p className="text-sm font-medium text-white">Continue in chat</p>
+          <p className="text-xs text-slate-200/60">A quieter way to keep going</p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-full border border-white/10 bg-white/[0.05] px-3 py-1 text-xs text-slate-100/80 hover:bg-white/[0.08]"
+        >
+          Close
+        </button>
+      </div>
+
+      <div ref={chatScrollRef} className="max-h-72 space-y-2 overflow-y-auto px-4 py-3">
+        {chat.messages.map((message) => (
+          <div key={message.id} className={message.role === "user" ? "flex justify-end" : "flex justify-start"}>
+            <div
+              className={`max-w-[88%] rounded-2xl px-3 py-2 text-sm leading-6 ${
+                message.role === "user"
+                  ? "bg-gradient-to-r from-cyan-300 to-sky-400 text-slate-950"
+                  : "border border-white/10 bg-white/[0.06] text-slate-100"
+              }`}
+            >
+              {message.content}
+              {message.role === "assistant" && message.id !== "welcome" && (
+                <AnimatePresence>
+                  <FeedbackControls
+                    status={message.meta?.feedbackStatus || "idle"}
+                    hidden={message.meta?.feedbackHidden}
+                    onFeedback={(feedback) =>
+                      chat.sendFeedback(message.id, feedback, {
+                        userId: session?.user?.user_id,
+                        sessionToken: session?.session_token,
+                        responseId: message.meta?.responseId || message.id,
+                        metadata: {
+                          source: "chat-ui",
+                          message: message.content,
+                        },
+                      })
+                    }
+                  />
+                </AnimatePresence>
+              )}
+            </div>
+          </div>
+        ))}
+        {chat.isThinking && <p className="px-1 text-xs text-slate-200/60">{thinkingText}</p>}
+      </div>
+
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          submitChat();
+        }}
+        className="border-t border-white/10 p-3"
+      >
+        <div className="flex gap-2">
+          <input
+            value={inputValue}
+            onChange={(event) => setInputValue(event.target.value)}
+            placeholder="Type a thought..."
+            className="h-11 min-w-0 flex-1 rounded-2xl border border-white/10 bg-white/[0.05] px-3 text-sm text-white outline-none placeholder:text-slate-400"
+          />
+          <button
+            type="submit"
+            className="rounded-2xl bg-white px-4 text-sm font-medium text-slate-950 transition hover:-translate-y-0.5"
+          >
+            Send
+          </button>
+        </div>
+      </form>
+    </motion.div>
+  );
+});
+
 export default function Dashboard({ session, onLogout }) {
   const reduceMotion = useReducedMotion();
   const [ripples, setRipples] = useState([]);
   const [activeChipIndex, setActiveChipIndex] = useState(-1);
   const [showChat, setShowChat] = useState(false);
   const [hasInteracted, setHasInteracted] = useState(false);
-  const [chatInput, setChatInput] = useState("");
+  const [chatDraftSeed, setChatDraftSeed] = useState("");
   const [profileUser, setProfileUser] = useState(() => session?.user || {});
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isClearingMemory, setIsClearingMemory] = useState(false);
@@ -248,37 +384,9 @@ export default function Dashboard({ session, onLogout }) {
   const chipTimeoutRef = useRef(null);
   const particles = useMemo(() => createParticles(), []);
 
-  const speech = useSpeechPlayback();
-  const handleAssistantReply = useCallback(
-    (text) => {
-      if (!showChat) {
-        return;
-      }
-      speech.speak(text);
-    },
-    [showChat, speech],
-  );
-
-  const chat = useSupportChat({ onAssistantReply: handleAssistantReply });
-  const handleFinalVoiceTranscript = useCallback(
-    (transcript) => {
-      const text = String(transcript || "").trim();
-      if (!text) {
-        return;
-      }
-
-      chat.sendMessage(text, "voice", {
-        userId: session?.user?.user_id,
-        sessionToken: session?.session_token,
-        demoMode: false,
-      });
-      setShowChat(true);
-    },
-    [chat, session?.session_token, session?.user?.user_id],
-  );
+  const chat = useSupportChat();
 
   const voice = useVapiVoiceAgent({
-    onFinalTranscript: handleFinalVoiceTranscript,
     userId: session?.user?.user_id || "",
     sessionToken: session?.session_token || "",
   });
@@ -299,9 +407,9 @@ export default function Dashboard({ session, onLogout }) {
 
   const isListening = voice.activity === "listening";
   const isConnecting = voice.connecting;
-  const isReasoning = voice.activity === "processing" || chat.isThinking;
+  const isReasoning = voice.activity === "processing";
   const isThinking = isConnecting || isReasoning;
-  const isSpeaking = voice.activity === "answering" || speech.speaking;
+  const isSpeaking = voice.activity === "answering";
 
   const statusText = useMemo(() => {
     if (isConnecting) {
@@ -328,12 +436,6 @@ export default function Dashboard({ session, onLogout }) {
     }),
     [voice.assistantTranscript, voice.userTranscript],
   );
-
-  useEffect(() => {
-    if (!showChat) {
-      speech.stop();
-    }
-  }, [showChat, speech]);
 
   useEffect(() => {
     if (!isReasoning) {
@@ -515,10 +617,19 @@ export default function Dashboard({ session, onLogout }) {
     setContinuityVisible(false);
     setShowChat(true);
     setHasInteracted(true);
-  }, []);
+    const topic = String(continuityMemory?.last_topic || "your last conversation").trim();
+    const summary = String(continuityMemory?.summary || "").trim();
+    const seeded = summary
+      ? `Can we continue from last time? We were focusing on ${topic}. Last note: ${summary}`
+      : `Can we continue from last time? We were focusing on ${topic}.`;
+    setChatDraftSeed(seeded);
+  }, [continuityMemory?.last_topic, continuityMemory?.summary]);
 
   const startFreshFromMemory = useCallback(() => {
     setContinuityVisible(false);
+    setShowChat(true);
+    setHasInteracted(true);
+    setChatDraftSeed("");
     chat.resetChat();
   }, [chat]);
 
@@ -591,20 +702,6 @@ export default function Dashboard({ session, onLogout }) {
     },
     [voice],
   );
-
-  const submitChat = useCallback(() => {
-    const text = chatInput.trim();
-    if (!text) {
-      return;
-    }
-
-    chat.sendMessage(text, "text", {
-      userId: session?.user?.user_id,
-      sessionToken: session?.session_token,
-      demoMode: false,
-    });
-    setChatInput("");
-  }, [chat, chatInput, session?.session_token, session?.user?.user_id]);
 
   return (
     <div className="relative min-h-screen overflow-hidden px-5 py-5 text-white sm:px-8">
@@ -1199,87 +1296,16 @@ export default function Dashboard({ session, onLogout }) {
       </AnimatePresence>
 
       <AnimatePresence>
-        {(hasInteracted || showChat) && showChat && (
-          <motion.div
-            initial={{ opacity: 0, y: 12, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 12, scale: 0.98 }}
-            transition={{ duration: 0.5, ease: "easeInOut" }}
-            className="fixed bottom-24 right-5 z-40 w-[min(92vw,24rem)] overflow-hidden rounded-[1.2rem] border border-white/12 bg-[#0b1323]/95 shadow-[0_20px_52px_rgba(2,8,23,0.44)] backdrop-blur-md"
-          >
-            <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-              <div>
-                <p className="text-sm font-medium text-white">Continue in chat</p>
-                <p className="text-xs text-slate-200/60">A quieter way to keep going</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowChat(false)}
-                className="rounded-full border border-white/10 bg-white/[0.05] px-3 py-1 text-xs text-slate-100/80 hover:bg-white/[0.08]"
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="max-h-72 space-y-2 overflow-y-auto px-4 py-3">
-              {chat.messages.slice(-6).map((message) => (
-                <div key={message.id} className={message.role === "user" ? "flex justify-end" : "flex justify-start"}>
-                  <div
-                    className={`max-w-[88%] rounded-2xl px-3 py-2 text-sm leading-6 ${
-                      message.role === "user"
-                        ? "bg-gradient-to-r from-cyan-300 to-sky-400 text-slate-950"
-                        : "border border-white/10 bg-white/[0.06] text-slate-100"
-                    }`}
-                  >
-                    {message.content}
-                    {message.role === "assistant" && message.id !== "welcome" && (
-                      <AnimatePresence>
-                        <FeedbackControls
-                          status={message.meta?.feedbackStatus || "idle"}
-                          hidden={message.meta?.feedbackHidden}
-                          onFeedback={(feedback) =>
-                            chat.sendFeedback(message.id, feedback, {
-                              userId: session?.user?.user_id,
-                              sessionToken: session?.session_token,
-                              responseId: message.meta?.responseId || message.id,
-                              metadata: {
-                                source: "chat-ui",
-                                message: message.content,
-                              },
-                            })
-                          }
-                        />
-                      </AnimatePresence>
-                    )}
-                  </div>
-                </div>
-              ))}
-              {chat.isThinking && <p className="px-1 text-xs text-slate-200/60">{thinkingText}</p>}
-            </div>
-
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                submitChat();
-              }}
-              className="border-t border-white/10 p-3"
-            >
-              <div className="flex gap-2">
-                <input
-                  value={chatInput}
-                  onChange={(event) => setChatInput(event.target.value)}
-                  placeholder="Type a thought..."
-                  className="h-11 min-w-0 flex-1 rounded-2xl border border-white/10 bg-white/[0.05] px-3 text-sm text-white outline-none placeholder:text-slate-400"
-                />
-                <button
-                  type="submit"
-                  className="rounded-2xl bg-white px-4 text-sm font-medium text-slate-950 transition hover:-translate-y-0.5"
-                >
-                  Send
-                </button>
-              </div>
-            </form>
-          </motion.div>
+        {(hasInteracted || showChat) && (
+          <ChatDrawer
+            visible={showChat}
+            chat={chat}
+            session={session}
+            thinkingText={thinkingText}
+            initialDraft={chatDraftSeed}
+            onClose={() => setShowChat(false)}
+            onDraftConsumed={() => setChatDraftSeed("")}
+          />
         )}
       </AnimatePresence>
     </div>
