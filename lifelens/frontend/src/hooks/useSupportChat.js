@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const CHAT_REQUEST_TIMEOUT_MS = 25000;
+const MAX_MESSAGES = 60;
 
 const WELCOME_MESSAGE = {
   id: "welcome",
@@ -26,6 +27,10 @@ export function useSupportChat({ onAssistantReply } = {}) {
   const queueRef = useRef([]);
   const processingRef = useRef(false);
   const insightTimerRef = useRef(null);
+
+  const appendMessage = useCallback((message) => {
+    setMessages((current) => [...current, message].slice(-MAX_MESSAGES));
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -86,20 +91,17 @@ export function useSupportChat({ onAssistantReply } = {}) {
 
       const assistantText = (data.reply || "I am still here with you. Please try that again.").trim();
       const responseId = String(data.response_id || `chat-${Date.now()}`);
-      setMessages((current) => [
-        ...current,
-        {
-          id: responseId,
-          role: "assistant",
-          content: assistantText,
-          meta: {
-            source: "lifelens",
-            responseId,
-            urgency: data.intent?.urgency || "medium",
-            latencyMs: Number(data.processing_ms || 0)
-          }
+      appendMessage({
+        id: responseId,
+        role: "assistant",
+        content: assistantText,
+        meta: {
+          source: "lifelens",
+          responseId,
+          urgency: data.intent?.urgency || "medium",
+          latencyMs: Number(data.processing_ms || 0)
         }
-      ]);
+      });
       onAssistantReply?.(assistantText);
 
       if (insightTimerRef.current) {
@@ -111,7 +113,7 @@ export function useSupportChat({ onAssistantReply } = {}) {
         insightTimerRef.current = setTimeout(() => {
           setLifeInsight(incomingInsight);
           setInsightPending(false);
-        }, data.demo_mode ? 320 : 820);
+        }, data.demo_mode ? 160 : 180);
       } else {
         setInsightPending(false);
       }
@@ -121,15 +123,12 @@ export function useSupportChat({ onAssistantReply } = {}) {
         ? "The request took too long. Please try once more."
         : (sendError?.message || "The assistant request failed.");
       setError(messageText);
-      setMessages((current) => [
-        ...current,
-        {
-          id: `assistant-error-${Date.now()}`,
-          role: "assistant",
-          content: messageText,
-          meta: { source: "fallback", error: true }
-        }
-      ]);
+      appendMessage({
+        id: `assistant-error-${Date.now()}`,
+        role: "assistant",
+        content: messageText,
+        meta: { source: "fallback", error: true }
+      });
     } finally {
       if (timeoutId !== null) {
         window.clearTimeout(timeoutId);
@@ -140,7 +139,7 @@ export function useSupportChat({ onAssistantReply } = {}) {
         processNext();
       }
     }
-  }, [onAssistantReply]);
+  }, [appendMessage, onAssistantReply]);
 
   const sendMessage = useCallback((message, source = "text", options = {}) => {
     const trimmed = message.trim();
@@ -148,15 +147,12 @@ export function useSupportChat({ onAssistantReply } = {}) {
       return;
     }
 
-    setMessages((current) => [
-      ...current,
-      {
-        id: `user-${Date.now()}`,
-        role: "user",
-        content: trimmed,
-        meta: { source }
-      }
-    ]);
+    appendMessage({
+      id: `user-${Date.now()}`,
+      role: "user",
+      content: trimmed,
+      meta: { source }
+    });
 
     queueRef.current.push({
       message: trimmed,
@@ -166,7 +162,7 @@ export function useSupportChat({ onAssistantReply } = {}) {
       demoMode: Boolean(options.demoMode)
     });
     processNext();
-  }, [processNext]);
+  }, [appendMessage, processNext]);
 
   const resetChat = useCallback(() => {
     setMessages([WELCOME_MESSAGE]);
@@ -247,7 +243,7 @@ export function useSupportChat({ onAssistantReply } = {}) {
               : message,
           ),
         );
-      }, 2600);
+      }, 1200);
     } catch {
       setMessages((current) =>
         current.map((message) =>

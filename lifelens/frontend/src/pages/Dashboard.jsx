@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, MotionConfig, motion, useReducedMotion } from "framer-motion";
 
 import { useSupportChat } from "../hooks/useSupportChat";
 import { useVapiVoiceAgent } from "../hooks/useVapiVoiceAgent";
@@ -72,7 +72,7 @@ function summarizeProfile(memory, name) {
 }
 
 function createParticles() {
-  return Array.from({ length: 22 }).map((_, index) => ({
+  return Array.from({ length: 12 }).map((_, index) => ({
     id: `particle-${index}`,
     size: 2 + (index % 4),
     left: `${4 + (index * 4.4) % 96}%`,
@@ -100,7 +100,7 @@ const thinkingNodes = [
   { left: "49%", top: "4%", lineWidth: "24%", rotate: "90deg", delay: 0.56 },
 ];
 
-const orbWaveStrands = Array.from({ length: 14 }).map((_, index) => ({
+const orbWaveStrands = Array.from({ length: 8 }).map((_, index) => ({
   id: `orb-wave-${index}`,
   top: 18 + index * 4.2,
   opacity: 0.05 + (index % 4) * 0.025,
@@ -108,7 +108,7 @@ const orbWaveStrands = Array.from({ length: 14 }).map((_, index) => ({
   skew: index % 2 === 0 ? -6 : 6,
 }));
 
-const orbDotLayers = Array.from({ length: 4 }).map((_, index) => ({
+const orbDotLayers = Array.from({ length: 3 }).map((_, index) => ({
   id: `orb-dots-${index}`,
   inset: 6 + index * 5,
   size: 10 + index * 2,
@@ -117,14 +117,14 @@ const orbDotLayers = Array.from({ length: 4 }).map((_, index) => ({
   reverse: index % 2 === 1,
 }));
 
-const orbScanRings = Array.from({ length: 4 }).map((_, index) => ({
+const orbScanRings = Array.from({ length: 3 }).map((_, index) => ({
   id: `orb-ring-${index}`,
   inset: 3 + index * 6,
   delay: index * 0.28,
 }));
 
-const orbSpeakerDots = Array.from({ length: 12 }).map((_, index) => {
-  const angle = (index / 12) * Math.PI * 2;
+const orbSpeakerDots = Array.from({ length: 8 }).map((_, index) => {
+  const angle = (index / 8) * Math.PI * 2;
   return {
     id: `speaker-dot-${index}`,
     x: Math.cos(angle) * 126,
@@ -133,8 +133,8 @@ const orbSpeakerDots = Array.from({ length: 12 }).map((_, index) => {
   };
 });
 
-const orbListeningDots = Array.from({ length: 8 }).map((_, index) => {
-  const angle = (index / 8) * Math.PI * 2;
+const orbListeningDots = Array.from({ length: 5 }).map((_, index) => {
+  const angle = (index / 5) * Math.PI * 2;
   return {
     id: `listen-dot-${index}`,
     x: Math.cos(angle) * 108,
@@ -148,6 +148,126 @@ const orbConnectionBands = [
   { id: "band-2", width: "66%", height: "18%", rotate: "12deg", delay: 0.24 },
   { id: "band-3", width: "58%", height: "14%", rotate: "-4deg", delay: 0.42 },
 ];
+
+const DashboardBackground = memo(function DashboardBackground({ reduceMotion, particles }) {
+  return (
+    <div className="pointer-events-none absolute inset-0 -z-20 overflow-hidden">
+      <motion.div
+        className="absolute inset-[-18%] bg-[radial-gradient(circle_at_48%_10%,rgba(64,139,229,0.16),transparent_34%),radial-gradient(circle_at_12%_22%,rgba(103,126,224,0.12),transparent_28%),radial-gradient(circle_at_82%_68%,rgba(94,146,220,0.1),transparent_26%),linear-gradient(120deg,#050d1c_0%,#07142c_48%,#040a17_100%)]"
+        animate={reduceMotion ? { opacity: 1 } : { backgroundPosition: ["0% 0%", "100% 100%", "0% 0%"] }}
+        transition={{ duration: 14, repeat: Infinity, ease: "easeInOut" }}
+      />
+
+      <motion.div
+        className="absolute inset-0 opacity-55"
+        style={{
+          backgroundImage:
+            "repeating-linear-gradient(180deg, transparent 0px, transparent 16px, rgba(148,163,184,0.08) 17px, transparent 18px)",
+        }}
+        animate={reduceMotion ? { opacity: 0.24 } : { opacity: [0.16, 0.28, 0.16], y: [0, 6, 0] }}
+        transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
+      />
+
+      {particles.map((particle) => (
+        <motion.span
+          key={particle.id}
+          className="absolute rounded-full bg-cyan-100/50 blur-[0.8px]"
+          style={{ width: `${particle.size}px`, height: `${particle.size}px`, left: particle.left, top: particle.top }}
+          animate={
+            reduceMotion
+              ? { opacity: 0.2 }
+              : { y: [0, -12, 0], x: [0, particle.drift, 0], opacity: [0.08, 0.32, 0.08] }
+          }
+          transition={{ duration: particle.duration, delay: particle.delay, repeat: Infinity, ease: "easeInOut" }}
+        />
+      ))}
+    </div>
+  );
+});
+
+const ChatMessagesList = memo(function ChatMessagesList({ messages, isThinking, thinkingText, onFeedback, session }) {
+  return (
+    <div className="max-h-72 space-y-2 overflow-y-auto px-4 py-3">
+      {messages.map((message) => (
+        <div key={message.id} className={message.role === "user" ? "flex justify-end" : "flex justify-start"}>
+          <div
+            className={`max-w-[88%] rounded-2xl px-3 py-2 text-sm leading-6 ${
+              message.role === "user"
+                ? "bg-gradient-to-r from-cyan-300 to-sky-400 text-slate-950"
+                : "border border-white/10 bg-white/[0.06] text-slate-100"
+            }`}
+          >
+            {message.content}
+            {message.role === "assistant" && message.id !== "welcome" && (
+              <AnimatePresence>
+                <FeedbackControls
+                  status={message.meta?.feedbackStatus || "idle"}
+                  hidden={message.meta?.feedbackHidden}
+                  onFeedback={(feedback) =>
+                    onFeedback(message.id, feedback, {
+                      userId: session?.user?.user_id,
+                      sessionToken: session?.session_token,
+                      responseId: message.meta?.responseId || message.id,
+                      metadata: {
+                        source: "chat-ui",
+                        message: message.content,
+                      },
+                    })
+                  }
+                />
+              </AnimatePresence>
+            )}
+          </div>
+        </div>
+      ))}
+      {isThinking && <p className="px-1 text-xs text-slate-200/60">{thinkingText}</p>}
+    </div>
+  );
+});
+
+const ChatComposer = memo(function ChatComposer({ session, initialDraft, onSubmit, onDraftConsumed }) {
+  const [inputValue, setInputValue] = useState(initialDraft || "");
+
+  useEffect(() => {
+    setInputValue(initialDraft || "");
+  }, [initialDraft]);
+
+  const handleSubmit = useCallback(
+    (event) => {
+      event.preventDefault();
+      const text = inputValue.trim();
+      if (!text) {
+        return;
+      }
+      onSubmit(text, {
+        userId: session?.user?.user_id,
+        sessionToken: session?.session_token,
+      });
+      setInputValue("");
+      onDraftConsumed?.();
+    },
+    [inputValue, onDraftConsumed, onSubmit, session?.session_token, session?.user?.user_id],
+  );
+
+  return (
+    <form onSubmit={handleSubmit} className="border-t border-white/10 p-3">
+      <div className="flex gap-2">
+        <input
+          value={inputValue}
+          onChange={(event) => setInputValue(event.target.value)}
+          placeholder="Type a thought..."
+          className="h-11 min-w-0 flex-1 rounded-2xl border border-white/10 bg-white/[0.05] px-3 text-sm text-white outline-none placeholder:text-slate-400"
+        />
+        <button
+          type="submit"
+          className="rounded-2xl bg-white px-4 text-sm font-medium text-slate-950 transition hover:-translate-y-0.5"
+        >
+          Send
+        </button>
+      </div>
+    </form>
+  );
+});
 
 function ContinuityPrompt({ memory, onContinue, onFresh, onDismiss }) {
   if (!memory) {
@@ -240,43 +360,38 @@ function FeedbackControls({ status, hidden, onFeedback }) {
 
 const ChatDrawer = memo(function ChatDrawer({
   visible,
-  chat,
   session,
   thinkingText,
   initialDraft,
+  resetToken,
   onClose,
   onDraftConsumed,
 }) {
-  const [inputValue, setInputValue] = useState(initialDraft || "");
+  const chat = useSupportChat();
+  const { resetChat, messages, isThinking, sendFeedback, sendMessage } = chat;
   const chatScrollRef = useRef(null);
 
   useEffect(() => {
-    if (visible) {
-      setInputValue(initialDraft || "");
-    }
-  }, [initialDraft, visible]);
+    resetChat();
+  }, [resetChat, resetToken]);
 
   useEffect(() => {
     if (!visible || !chatScrollRef.current) {
       return;
     }
     chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
-  }, [chat.messages, chat.isThinking, visible]);
+  }, [messages, isThinking, visible]);
 
-  const submitChat = useCallback(() => {
-    const text = inputValue.trim();
-    if (!text) {
-      return;
-    }
-
-    chat.sendMessage(text, "text", {
-      userId: session?.user?.user_id,
-      sessionToken: session?.session_token,
-      demoMode: false,
-    });
-    setInputValue("");
-    onDraftConsumed?.();
-  }, [chat, inputValue, onDraftConsumed, session?.session_token, session?.user?.user_id]);
+  const submitChat = useCallback(
+    (text, options = {}) => {
+      sendMessage(text, "text", {
+        userId: options.userId || session?.user?.user_id,
+        sessionToken: options.sessionToken || session?.session_token,
+        demoMode: false,
+      });
+    },
+    [sendMessage, session?.session_token, session?.user?.user_id],
+  );
 
   if (!visible) {
     return null;
@@ -304,75 +419,35 @@ const ChatDrawer = memo(function ChatDrawer({
         </button>
       </div>
 
-      <div ref={chatScrollRef} className="max-h-72 space-y-2 overflow-y-auto px-4 py-3">
-        {chat.messages.map((message) => (
-          <div key={message.id} className={message.role === "user" ? "flex justify-end" : "flex justify-start"}>
-            <div
-              className={`max-w-[88%] rounded-2xl px-3 py-2 text-sm leading-6 ${
-                message.role === "user"
-                  ? "bg-gradient-to-r from-cyan-300 to-sky-400 text-slate-950"
-                  : "border border-white/10 bg-white/[0.06] text-slate-100"
-              }`}
-            >
-              {message.content}
-              {message.role === "assistant" && message.id !== "welcome" && (
-                <AnimatePresence>
-                  <FeedbackControls
-                    status={message.meta?.feedbackStatus || "idle"}
-                    hidden={message.meta?.feedbackHidden}
-                    onFeedback={(feedback) =>
-                      chat.sendFeedback(message.id, feedback, {
-                        userId: session?.user?.user_id,
-                        sessionToken: session?.session_token,
-                        responseId: message.meta?.responseId || message.id,
-                        metadata: {
-                          source: "chat-ui",
-                          message: message.content,
-                        },
-                      })
-                    }
-                  />
-                </AnimatePresence>
-              )}
-            </div>
-          </div>
-        ))}
-        {chat.isThinking && <p className="px-1 text-xs text-slate-200/60">{thinkingText}</p>}
+      <div ref={chatScrollRef}>
+        <ChatMessagesList
+          messages={messages}
+          isThinking={isThinking}
+          thinkingText={thinkingText}
+          onFeedback={sendFeedback}
+          session={session}
+        />
       </div>
 
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          submitChat();
-        }}
-        className="border-t border-white/10 p-3"
-      >
-        <div className="flex gap-2">
-          <input
-            value={inputValue}
-            onChange={(event) => setInputValue(event.target.value)}
-            placeholder="Type a thought..."
-            className="h-11 min-w-0 flex-1 rounded-2xl border border-white/10 bg-white/[0.05] px-3 text-sm text-white outline-none placeholder:text-slate-400"
-          />
-          <button
-            type="submit"
-            className="rounded-2xl bg-white px-4 text-sm font-medium text-slate-950 transition hover:-translate-y-0.5"
-          >
-            Send
-          </button>
-        </div>
-      </form>
+      <ChatComposer
+        session={session}
+        initialDraft={initialDraft}
+        onSubmit={submitChat}
+        onDraftConsumed={onDraftConsumed}
+      />
     </motion.div>
   );
 });
 
 export default function Dashboard({ session, onLogout }) {
-  const reduceMotion = useReducedMotion();
+  const prefersReducedMotion = useReducedMotion();
   const [ripples, setRipples] = useState([]);
   const [activeChipIndex, setActiveChipIndex] = useState(-1);
   const [showChat, setShowChat] = useState(false);
+  const [forceReducedMotion, setForceReducedMotion] = useState(false);
   const [hasInteracted, setHasInteracted] = useState(false);
   const [chatDraftSeed, setChatDraftSeed] = useState("");
+  const [chatResetToken, setChatResetToken] = useState(0);
   const [profileUser, setProfileUser] = useState(() => session?.user || {});
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isClearingMemory, setIsClearingMemory] = useState(false);
@@ -383,8 +458,6 @@ export default function Dashboard({ session, onLogout }) {
   const settingsMenuRef = useRef(null);
   const chipTimeoutRef = useRef(null);
   const particles = useMemo(() => createParticles(), []);
-
-  const chat = useSupportChat();
 
   const voice = useVapiVoiceAgent({
     userId: session?.user?.user_id || "",
@@ -410,6 +483,21 @@ export default function Dashboard({ session, onLogout }) {
   const isReasoning = voice.activity === "processing";
   const isThinking = isConnecting || isReasoning;
   const isSpeaking = voice.activity === "answering";
+  const reduceMotion = Boolean(prefersReducedMotion || forceReducedMotion);
+  const orbActive = isListening || isThinking || isSpeaking;
+
+  useEffect(() => {
+    if (typeof navigator === "undefined") {
+      return;
+    }
+
+    const cores = Number(navigator.hardwareConcurrency || 8);
+    const memoryGb = Number(navigator.deviceMemory || 8);
+    const saveData = Boolean(navigator.connection?.saveData);
+    if (saveData || cores <= 4 || memoryGb <= 4) {
+      setForceReducedMotion(true);
+    }
+  }, []);
 
   const statusText = useMemo(() => {
     if (isConnecting) {
@@ -445,7 +533,7 @@ export default function Dashboard({ session, onLogout }) {
 
     const interval = window.setInterval(() => {
       setThinkingLabelIndex((current) => (current + 1) % thinkingLabels.length);
-    }, 1350);
+    }, 650);
 
     return () => window.clearInterval(interval);
   }, [isReasoning]);
@@ -627,11 +715,11 @@ export default function Dashboard({ session, onLogout }) {
 
   const startFreshFromMemory = useCallback(() => {
     setContinuityVisible(false);
+    setChatResetToken((current) => current + 1);
     setShowChat(true);
     setHasInteracted(true);
     setChatDraftSeed("");
-    chat.resetChat();
-  }, [chat]);
+  }, []);
 
   const sendVoiceFeedback = useCallback(
     async (feedback) => {
@@ -698,44 +786,15 @@ export default function Dashboard({ session, onLogout }) {
       }
       chipTimeoutRef.current = window.setTimeout(() => {
         setActiveChipIndex(-1);
-      }, 420);
+      }, 180);
     },
     [voice],
   );
 
   return (
-    <div className="relative min-h-screen overflow-hidden px-5 py-5 text-white sm:px-8">
-      <div className="pointer-events-none absolute inset-0 -z-20 overflow-hidden">
-        <motion.div
-          className="absolute inset-[-18%] bg-[radial-gradient(circle_at_48%_10%,rgba(64,139,229,0.16),transparent_34%),radial-gradient(circle_at_12%_22%,rgba(103,126,224,0.12),transparent_28%),radial-gradient(circle_at_82%_68%,rgba(94,146,220,0.1),transparent_26%),linear-gradient(120deg,#050d1c_0%,#07142c_48%,#040a17_100%)]"
-          animate={reduceMotion ? { opacity: 1 } : { backgroundPosition: ["0% 0%", "100% 100%", "0% 0%"] }}
-          transition={{ duration: 34, repeat: Infinity, ease: "easeInOut" }}
-        />
-
-        <motion.div
-          className="absolute inset-0 opacity-55"
-          style={{
-            backgroundImage:
-              "repeating-linear-gradient(180deg, transparent 0px, transparent 16px, rgba(148,163,184,0.08) 17px, transparent 18px)",
-          }}
-          animate={reduceMotion ? { opacity: 0.24 } : { opacity: [0.16, 0.28, 0.16], y: [0, 6, 0] }}
-          transition={{ duration: 12, repeat: Infinity, ease: "easeInOut" }}
-        />
-
-        {particles.map((particle) => (
-          <motion.span
-            key={particle.id}
-            className="absolute rounded-full bg-cyan-100/50 blur-[0.8px]"
-            style={{ width: `${particle.size}px`, height: `${particle.size}px`, left: particle.left, top: particle.top }}
-            animate={
-              reduceMotion
-                ? { opacity: 0.2 }
-                : { y: [0, -12, 0], x: [0, particle.drift, 0], opacity: [0.08, 0.32, 0.08] }
-            }
-            transition={{ duration: particle.duration, delay: particle.delay, repeat: Infinity, ease: "easeInOut" }}
-          />
-        ))}
-      </div>
+    <MotionConfig reducedMotion={reduceMotion ? "always" : "never"}>
+      <div className="relative min-h-screen overflow-hidden px-5 py-5 text-white sm:px-8">
+      <DashboardBackground reduceMotion={reduceMotion} particles={particles} />
 
       <motion.header
         initial={{ opacity: 0, y: -12 }}
@@ -828,14 +887,14 @@ export default function Dashboard({ session, onLogout }) {
             <motion.div
               className="h-[24rem] w-[24rem] rounded-full bg-cyan-300/8 blur-[78px]"
               animate={reduceMotion ? { opacity: 0.45 } : { opacity: [0.3, 0.56, 0.3], scale: [1, 1.04, 1] }}
-              transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
+              transition={{ duration: 4.2, repeat: Infinity, ease: "easeInOut" }}
             />
           </div>
 
           <motion.div
             className="pointer-events-none absolute left-[-8%] right-[-8%] top-[31%] h-[10.5rem] overflow-hidden"
             animate={reduceMotion ? { opacity: 0.18 } : { opacity: [0.08, 0.24, 0.08], x: [-10, 10, -10] }}
-            transition={{ duration: 10.5, repeat: Infinity, ease: "easeInOut" }}
+            transition={{ duration: 5.2, repeat: Infinity, ease: "easeInOut" }}
           >
             {orbWaveStrands.map((strand) => (
               <motion.span
@@ -852,7 +911,7 @@ export default function Dashboard({ session, onLogout }) {
                     ? { scaleX: 1 }
                     : { scaleX: [0.92, 1.02, 0.95], y: [0, strand.skew > 0 ? -6 : 6, 0] }
                 }
-                transition={{ duration: 6.8, repeat: Infinity, ease: "easeInOut", delay: strand.delay }}
+                transition={{ duration: 3.2, repeat: Infinity, ease: "easeInOut", delay: strand.delay * 0.7 }}
               />
             ))}
           </motion.div>
@@ -876,7 +935,7 @@ export default function Dashboard({ session, onLogout }) {
                         ? { opacity: 0.14 }
                         : { scaleX: [0.86, 1.02, 0.86], opacity: [0.08, 0.28, 0.08] }
                     }
-                    transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut", delay: line * 0.1 }}
+                    transition={{ duration: 0.72, repeat: Infinity, ease: "easeInOut", delay: line * 0.08 }}
                   />
                 ))}
               </motion.div>
@@ -911,27 +970,27 @@ export default function Dashboard({ session, onLogout }) {
                           "0 0 72px rgba(16,185,129,0.28)",
                         ],
                       }
-                    : { scale: [1, 1.01, 1], boxShadow: ["0 0 56px rgba(45,212,191,0.18)", "0 0 74px rgba(34,211,238,0.22)", "0 0 56px rgba(45,212,191,0.18)"] }
+                    : { scale: 1, boxShadow: "0 0 44px rgba(34,211,238,0.16)" }
             }
-            transition={{ duration: 3.4, repeat: Infinity, ease: "easeInOut" }}
+            transition={orbActive ? { duration: 2.2, repeat: Infinity, ease: "easeInOut" } : { duration: 0.35, ease: "easeOut" }}
             className="group relative z-10 flex aspect-square h-80 w-80 items-center justify-center overflow-visible rounded-full border border-cyan-100/18 bg-transparent"
           >
             <motion.div
               className="absolute inset-[-18%] rounded-full bg-[radial-gradient(circle,rgba(34,211,238,0.34),rgba(103,232,249,0.16)_32%,rgba(56,189,248,0.08)_52%,transparent_76%)] blur-3xl"
-              animate={reduceMotion ? { opacity: 0.5 } : { opacity: [0.26, 0.6, 0.26], scale: [0.96, 1.08, 0.96] }}
-              transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
+              animate={reduceMotion || !orbActive ? { opacity: 0.36, scale: 1 } : { opacity: [0.26, 0.6, 0.26], scale: [0.96, 1.08, 0.96] }}
+              transition={{ duration: 4.2, repeat: Infinity, ease: "easeInOut" }}
             />
 
             <motion.div
               className="absolute inset-[4%] rounded-full bg-[radial-gradient(circle_at_50%_38%,rgba(232,249,255,0.5)_0%,rgba(125,211,252,0.34)_18%,rgba(34,211,238,0.3)_34%,rgba(8,47,73,0.72)_64%,rgba(3,10,24,0.96)_100%)] shadow-[inset_0_0_26px_rgba(224,247,255,0.16),inset_0_0_74px_rgba(14,116,144,0.28)]"
-              animate={reduceMotion ? { scale: 1 } : { scale: [1, 1.018, 1], opacity: [0.94, 1, 0.94] }}
-              transition={{ duration: 6.8, repeat: Infinity, ease: "easeInOut" }}
+              animate={reduceMotion || !orbActive ? { scale: 1, opacity: 0.95 } : { scale: [1, 1.018, 1], opacity: [0.94, 1, 0.94] }}
+              transition={{ duration: 3.4, repeat: Infinity, ease: "easeInOut" }}
             />
 
             <motion.div
               className="absolute inset-[9%] rounded-full bg-[radial-gradient(circle_at_42%_28%,rgba(255,255,255,0.16),transparent_28%),radial-gradient(circle_at_68%_72%,rgba(34,211,238,0.18),transparent_24%),linear-gradient(180deg,rgba(186,230,253,0.08),rgba(8,47,73,0.1))]"
               animate={
-                reduceMotion
+                reduceMotion || !orbActive
                   ? { rotate: 0 }
                   : {
                       rotate: [0, 8, 0, -8, 0],
@@ -943,7 +1002,7 @@ export default function Dashboard({ session, onLogout }) {
                       ],
                     }
               }
-              transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }}
+              transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }}
             />
 
             {orbConnectionBands.map((band) => (
@@ -958,15 +1017,15 @@ export default function Dashboard({ session, onLogout }) {
                   rotate: band.rotate,
                   filter: "blur(1px)",
                 }}
-                animate={reduceMotion ? { opacity: 0.14 } : { opacity: [0.06, 0.2, 0.06], scaleX: [0.98, 1.03, 0.98], y: [0, -4, 0, 4, 0] }}
-                transition={{ duration: 7.6, repeat: Infinity, ease: "easeInOut", delay: band.delay }}
+                animate={reduceMotion || !orbActive ? { opacity: 0.1 } : { opacity: [0.06, 0.2, 0.06], scaleX: [0.98, 1.03, 0.98], y: [0, -4, 0, 4, 0] }}
+                transition={{ duration: 3.8, repeat: Infinity, ease: "easeInOut", delay: band.delay * 0.7 }}
               />
             ))}
 
             <motion.div
               className="absolute inset-[16%] rounded-full bg-[radial-gradient(circle,rgba(255,255,255,0.18)_0%,rgba(224,247,255,0.06)_24%,transparent_64%)]"
-              animate={reduceMotion ? { opacity: 0.44 } : { opacity: [0.18, 0.34, 0.18], scale: [0.98, 1.03, 0.98] }}
-              transition={{ duration: 7.2, repeat: Infinity, ease: "easeInOut" }}
+              animate={reduceMotion || !orbActive ? { opacity: 0.28 } : { opacity: [0.18, 0.34, 0.18], scale: [0.98, 1.03, 0.98] }}
+              transition={{ duration: 3.6, repeat: Infinity, ease: "easeInOut" }}
             />
 
             <AnimatePresence>
@@ -984,7 +1043,7 @@ export default function Dashboard({ session, onLogout }) {
                       className="absolute left-1/2 top-1/2 h-2 w-2 rounded-full bg-cyan-200 shadow-[0_0_12px_rgba(34,211,238,0.78)]"
                       style={{ x: dot.x, y: dot.y, marginLeft: "-0.25rem", marginTop: "-0.25rem" }}
                       animate={reduceMotion ? { opacity: 0.5 } : { opacity: [0.22, 1, 0.22], scale: [0.8, 1.3, 0.8] }}
-                      transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut", delay: dot.delay }}
+                      transition={{ duration: 0.88, repeat: Infinity, ease: "easeInOut", delay: dot.delay * 0.7 }}
                     />
                   ))}
                 </motion.div>
@@ -999,7 +1058,7 @@ export default function Dashboard({ session, onLogout }) {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1, rotate: 360 }}
                   exit={{ opacity: 0 }}
-                  transition={{ opacity: { duration: 0.3 }, rotate: { duration: 5.8, repeat: Infinity, ease: "linear" } }}
+                  transition={{ opacity: { duration: 0.2 }, rotate: { duration: 3.6, repeat: Infinity, ease: "linear" } }}
                 >
                   {orbSpeakerDots.map((dot, index) => (
                     <motion.span
@@ -1014,7 +1073,7 @@ export default function Dashboard({ session, onLogout }) {
                         marginTop: index % 3 === 0 ? "-0.275rem" : "-0.175rem",
                       }}
                       animate={reduceMotion ? { opacity: 0.7 } : { opacity: [0.3, 1, 0.3], scale: [0.85, 1.5, 0.85] }}
-                      transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut", delay: dot.delay }}
+                      transition={{ duration: 0.72, repeat: Infinity, ease: "easeInOut", delay: dot.delay * 0.7 }}
                     />
                   ))}
                 </motion.div>
@@ -1033,7 +1092,7 @@ export default function Dashboard({ session, onLogout }) {
                   <motion.span
                     className="absolute -left-1/4 top-[18%] h-[26%] w-1/2 rounded-full bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.14),transparent)] blur-md"
                     animate={{ x: ["0%", "260%"] }}
-                    transition={{ duration: 4.2, repeat: Infinity, ease: "easeInOut" }}
+                    transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
                   />
                 </motion.div>
               )}
@@ -1041,8 +1100,8 @@ export default function Dashboard({ session, onLogout }) {
 
             <motion.div
               className="absolute inset-[12%] rounded-full bg-[radial-gradient(circle_at_34%_28%,rgba(255,255,255,0.08),transparent_22%),radial-gradient(circle_at_68%_66%,rgba(103,232,249,0.12),transparent_26%),radial-gradient(circle_at_48%_52%,rgba(34,211,238,0.06),transparent_36%)] blur-md"
-              animate={reduceMotion ? { opacity: 0.22 } : { opacity: [0.12, 0.28, 0.12], scale: [0.99, 1.02, 0.99], rotate: [0, -6, 0] }}
-              transition={{ duration: 10.8, repeat: Infinity, ease: "easeInOut" }}
+              animate={reduceMotion || !orbActive ? { opacity: 0.14 } : { opacity: [0.12, 0.28, 0.12], scale: [0.99, 1.02, 0.99], rotate: [0, -6, 0] }}
+              transition={{ duration: 5.4, repeat: Infinity, ease: "easeInOut" }}
             />
 
             <AnimatePresence>
@@ -1063,7 +1122,7 @@ export default function Dashboard({ session, onLogout }) {
                         opacity: [0.22, 0.12, 0],
                       }}
                       transition={{
-                        duration: 2.1,
+                        duration: 1.2,
                         repeat: Infinity,
                         ease: "easeOut",
                         delay: wave * 0.35,
@@ -1086,7 +1145,7 @@ export default function Dashboard({ session, onLogout }) {
                   <motion.span
                     className="absolute inset-x-0 h-[18%] bg-[linear-gradient(180deg,transparent_0%,rgba(45,212,191,0.06)_30%,rgba(34,211,238,0.22)_50%,rgba(45,212,191,0.06)_70%,transparent_100%)] blur-sm"
                     animate={{ y: ["-15%", "470%"] }}
-                    transition={{ duration: 2.8, repeat: Infinity, ease: "easeInOut" }}
+                    transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
                   />
                 </motion.div>
               )}
@@ -1099,7 +1158,7 @@ export default function Dashboard({ session, onLogout }) {
                   initial={{ opacity: 0.36, scale: 0.78 }}
                   animate={{ opacity: 0, scale: 1.16 }}
                   exit={{ opacity: 0 }}
-                  transition={{ duration: 0.7, ease: "easeInOut" }}
+                  transition={{ duration: 0.45, ease: "easeInOut" }}
                   className="absolute inset-0 rounded-full border border-white/34"
                 />
               ))}
@@ -1107,8 +1166,8 @@ export default function Dashboard({ session, onLogout }) {
 
             <motion.div
               className="pointer-events-none absolute inset-[24%] rounded-full bg-[radial-gradient(circle,rgba(6,18,31,0.92)_0%,rgba(8,28,42,0.86)_54%,rgba(6,18,31,0.22)_100%)] shadow-[inset_0_0_22px_rgba(8,47,73,0.6)]"
-              animate={reduceMotion ? { opacity: 0.94 } : { opacity: [0.88, 0.98, 0.88], scale: [1, 0.995, 1] }}
-              transition={{ duration: 6.2, repeat: Infinity, ease: "easeInOut" }}
+              animate={reduceMotion || !orbActive ? { opacity: 0.92, scale: 1 } : { opacity: [0.88, 0.98, 0.88], scale: [1, 0.995, 1] }}
+              transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
             />
 
             <div className="relative z-10 flex max-w-[13rem] flex-col items-center text-center">
@@ -1295,19 +1354,20 @@ export default function Dashboard({ session, onLogout }) {
         )}
       </AnimatePresence>
 
-      <AnimatePresence>
-        {(hasInteracted || showChat) && (
-          <ChatDrawer
-            visible={showChat}
-            chat={chat}
-            session={session}
-            thinkingText={thinkingText}
-            initialDraft={chatDraftSeed}
-            onClose={() => setShowChat(false)}
-            onDraftConsumed={() => setChatDraftSeed("")}
-          />
-        )}
-      </AnimatePresence>
-    </div>
+        <AnimatePresence>
+          {(hasInteracted || showChat) && (
+            <ChatDrawer
+              visible={showChat}
+              session={session}
+              thinkingText={thinkingText}
+              initialDraft={chatDraftSeed}
+              resetToken={chatResetToken}
+              onClose={() => setShowChat(false)}
+              onDraftConsumed={() => setChatDraftSeed("")}
+            />
+          )}
+        </AnimatePresence>
+      </div>
+    </MotionConfig>
   );
 }

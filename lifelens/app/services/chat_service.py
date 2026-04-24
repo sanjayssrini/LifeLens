@@ -32,6 +32,8 @@ class ChatService:
         ]
         self._models: Dict[str, genai.GenerativeModel] = {}
         self._preferred_model = ""
+        self._bg_executor = ThreadPoolExecutor(max_workers=2)
+        self._memory_executor = ThreadPoolExecutor(max_workers=2)
 
         if self.enabled:
             genai.configure(api_key=settings.gemini_api_key)
@@ -108,20 +110,26 @@ class ChatService:
         if not user_id:
             return [], []
 
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            semantic_future = executor.submit(self.memory_service.search_similar, message, user_id, 3)
-            recent_future = executor.submit(self.memory_service.recent_user_memory, user_id, 3)
-
-            memory_hits: List[Dict[str, Any]] = []
+        if len((message or "").strip()) < 18:
             try:
-                memory_hits.extend(semantic_future.result())
+                recent = self.memory_service.recent_user_memory(user_id, 3)
             except Exception:
-                pass
+                recent = []
+            return recent, self._extract_memory_lines(recent)
 
-            try:
-                memory_hits.extend(recent_future.result())
-            except Exception:
-                pass
+        semantic_future = self._memory_executor.submit(self.memory_service.search_similar, message, user_id, 3)
+        recent_future = self._memory_executor.submit(self.memory_service.recent_user_memory, user_id, 3)
+
+        memory_hits: List[Dict[str, Any]] = []
+        try:
+            memory_hits.extend(semantic_future.result())
+        except Exception:
+            pass
+
+        try:
+            memory_hits.extend(recent_future.result())
+        except Exception:
+            pass
 
         lines: List[str] = []
         seen: set[str] = set()
@@ -135,6 +143,26 @@ class ChatService:
             if len(lines) >= 4:
                 break
         return memory_hits, lines
+
+    def _extract_memory_lines(self, memory_hits: List[Dict[str, Any]], limit: int = 4) -> List[str]:
+        lines: List[str] = []
+        seen: set[str] = set()
+        for item in memory_hits:
+            text = self._extract_text(item)
+            normalized = text.lower().strip()
+            if len(text) < 10 or normalized in seen:
+                continue
+            seen.add(normalized)
+            lines.append(text[:220])
+            if len(lines) >= limit:
+                break
+        return lines
+
+    def _submit_background(self, fn, *args, **kwargs) -> None:
+        try:
+            self._bg_executor.submit(fn, *args, **kwargs)
+        except Exception:
+            pass
 
     @staticmethod
     def _infer_intent(message: str) -> IntentAnalysis:
@@ -270,32 +298,28 @@ class ChatService:
         )
         insight_payload = insight.model_dump() if isinstance(insight, LifeInsight) else {}
         if insight_payload.get("summary"):
-            try:
-                self.memory_service.store_insight(
-                    user_id=user_id,
-                    message=message,
-                    insight_payload=insight_payload,
-                    metadata={"source": source, "mode": "chat"},
-                )
-            except Exception:
-                pass
-
-        try:
-            self.memory_service.store_interaction(
+            self._submit_background(
+                self.memory_service.store_insight,
                 user_id=user_id,
-                transcript=message,
-                intent=intent,
-                metadata={
-                    "source": source,
-                    "mode": "gemini-chat",
-                    "reply": reply,
-                    "response_id": response_id,
-                    "model_used": model_used,
-                    "demo_mode": bool(demo_mode or self.settings.demo_mode),
-                },
+                message=message,
+                insight_payload=insight_payload,
+                metadata={"source": source, "mode": "chat"},
             )
-        except Exception:
-            pass
+
+        self._submit_background(
+            self.memory_service.store_interaction,
+            user_id=user_id,
+            transcript=message,
+            intent=intent,
+            metadata={
+                "source": source,
+                "mode": "gemini-chat",
+                "reply": reply,
+                "response_id": response_id,
+                "model_used": model_used,
+                "demo_mode": bool(demo_mode or self.settings.demo_mode),
+            },
+        )
 
         return {
             "response_id": response_id,

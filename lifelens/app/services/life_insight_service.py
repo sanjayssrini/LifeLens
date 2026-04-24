@@ -19,6 +19,7 @@ class LifeInsightService:
             "gemini-2.0-flash",
             "gemini-1.5-flash",
         ]
+        self._models: Dict[str, genai.GenerativeModel] = {}
         if self.enabled:
             genai.configure(api_key=settings.gemini_api_key)
 
@@ -41,7 +42,10 @@ class LifeInsightService:
         last_exception: Exception | None = None
         for model_name in self.model_names:
             try:
-                model = genai.GenerativeModel(model_name=model_name)
+                model = self._models.get(model_name)
+                if model is None:
+                    model = genai.GenerativeModel(model_name=model_name)
+                    self._models[model_name] = model
                 response = model.generate_content(prompt)
                 text = (response.text or "").strip()
                 if text:
