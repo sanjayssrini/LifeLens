@@ -13,6 +13,7 @@ class IntentCascadeEngine:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.enabled = bool(settings.gemini_api_key)
+        self.fast_mode = bool(getattr(settings, "fast_mode", True))
         self.model_names = [
             settings.gemini_model,
             "gemini-1.5-flash",
@@ -246,6 +247,9 @@ class IntentCascadeEngine:
                 reasoning="No transcript text provided.",
             )
 
+        if self.fast_mode:
+            return self._fallback_intents(text)
+
         if self.model is None:
             return self._fallback_intents(text)
 
@@ -275,6 +279,9 @@ class IntentCascadeEngine:
         memory_hits: List[str],
         action_results: List[ActionResult],
     ) -> str:
+        if self.fast_mode:
+            return self._deterministic_support_reply(user_text, intent, memory_hits, action_results)
+
         if self.model is None:
             return self._deterministic_support_reply(user_text, intent, memory_hits, action_results)
 

@@ -8,7 +8,7 @@ function buildParticles() {
     x: ((index * 13) % 100) + "%",
     y: ((index * 17) % 100) + "%",
     delay: index * 0.35,
-    duration: 12 + (index % 6) * 2,
+    duration: 6 + (index % 6) * 1.2,
   }));
 }
 
@@ -54,7 +54,7 @@ export default function AmbientBackground() {
           style={{ x: xShift, y: yShift }}
           animate={{ scale: [1, 1.03, 1] }}
         transition={{
-          scale: { duration: 18, repeat: Infinity, ease: "easeInOut" },
+          scale: { duration: 8, repeat: Infinity, ease: "easeInOut" },
         }}
       />
 

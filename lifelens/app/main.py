@@ -2,6 +2,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.routes.system import router as system_router
@@ -29,6 +30,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(GZipMiddleware, minimum_size=512)
 
     memory_service = MemoryService(settings)
     memory_service.ensure_collection()
@@ -45,6 +47,7 @@ def create_app() -> FastAPI:
         insight_service=insight_service,
         state_store=state_store,
         user_service=user_service,
+        fast_mode=settings.fast_mode,
     )
     chat_service = ChatService(
         settings=settings,

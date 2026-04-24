@@ -22,7 +22,7 @@ body {
     radial-gradient(circle at 86% 22%, rgba(56, 189, 248, 0.16), transparent 36%),
     linear-gradient(132deg, var(--bg-0), var(--bg-1) 44%, var(--bg-2));
   background-size: 120% 120%;
-  background-attachment: fixed;
+  background-attachment: scroll;
 }
 
 #root {
@@ -47,12 +47,12 @@ body {
   background-image: radial-gradient(circle, rgba(56, 189, 248, 0.26) 1px, transparent 1px);
   background-size: 140px 140px;
   opacity: 0.12;
-  animation: particleFloat 26s linear infinite;
+  animation: particleFloat 12s linear infinite;
 }
 
 .noise-layer::after {
   animation-direction: reverse;
-  animation-duration: 34s;
+  animation-duration: 16s;
   opacity: 0.08;
 }
 

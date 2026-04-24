@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
 from time import monotonic
 from typing import Any, Dict, List
 
@@ -20,6 +21,7 @@ class VapiHandler:
         insight_service: LifeInsightService,
         state_store: StateStore,
         user_service: UserService | None = None,
+        fast_mode: bool = True,
     ) -> None:
         self.intent_engine = intent_engine
         self.action_engine = action_engine
@@ -27,7 +29,15 @@ class VapiHandler:
         self.insight_service = insight_service
         self.state_store = state_store
         self.user_service = user_service
+        self.fast_mode = bool(fast_mode)
+        self._bg_executor = ThreadPoolExecutor(max_workers=2)
         self._last_voice_memory: Dict[str, tuple[str, float]] = {}
+
+    def _submit_background(self, fn, *args, **kwargs) -> None:
+        try:
+            self._bg_executor.submit(fn, *args, **kwargs)
+        except Exception:
+            pass
 
     def _should_store_voice_turn(self, user_id: str, transcript: str) -> bool:
         normalized = transcript.strip().lower()
@@ -149,9 +159,15 @@ class VapiHandler:
 
         metadata = metadata or {}
         intent = self.intent_engine.analyze(text)
-        memory_hits = self.memory_service.search_similar(text, user_id=user_id)
-        if not memory_hits:
-            memory_hits = self.memory_service.recent_user_memory(user_id=user_id, limit=3)
+        try:
+            if self.fast_mode:
+                memory_hits = self.memory_service.recent_user_memory(user_id=user_id, limit=3)
+            else:
+                memory_hits = self.memory_service.search_similar(text, user_id=user_id)
+                if not memory_hits:
+                    memory_hits = self.memory_service.recent_user_memory(user_id=user_id, limit=3)
+        except Exception:
+            memory_hits = []
         action_results = self.action_engine.derive_actions(
             primary_intent=intent.primary_intent,
             derived_intents=intent.derived_intents,
@@ -176,20 +192,22 @@ class VapiHandler:
         )
         insight_payload = insight.model_dump()
         if insight_payload.get("summary"):
-            self.memory_service.store_insight(
+            self._submit_background(
+                self.memory_service.store_insight,
                 user_id=user_id,
                 message=text,
                 insight_payload=insight_payload,
                 metadata={"source": metadata.get("source", "vapi-webhook"), "mode": "voice"},
             )
 
-        self.memory_service.store_interaction(
+        self._submit_background(
+            self.memory_service.store_interaction,
             user_id=user_id,
             transcript=text,
             intent=intent,
             metadata={**metadata, "actions": [a.model_dump() for a in action_results]},
         )
-        self._append_profile_memory(user_id=user_id, transcript=text, source="vapi-assistant-request")
+        self._submit_background(self._append_profile_memory, user_id=user_id, transcript=text, source="vapi-assistant-request")
 
         self.state_store.update(
             transcript=text,
@@ -247,7 +265,8 @@ class VapiHandler:
 
         role = self._extract_role(payload, event.metadata)
         if event.transcript and role in {"user", "caller"} and self._should_store_voice_turn(event.user_id, event.transcript):
-            self.memory_service.store_memory_entry(
+            self._submit_background(
+                self.memory_service.store_memory_entry,
                 user_id=event.user_id,
                 content=event.transcript,
                 intent="voice_conversation",
@@ -258,7 +277,7 @@ class VapiHandler:
                     "role": role,
                 },
             )
-            self._append_profile_memory(user_id=event.user_id, transcript=event.transcript, source="vapi-transcript-event")
+            self._submit_background(self._append_profile_memory, user_id=event.user_id, transcript=event.transcript, source="vapi-transcript-event")
 
         return {
             "type": "noop",
