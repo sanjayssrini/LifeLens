@@ -516,15 +516,18 @@ const ChatDrawer = memo(function ChatDrawer({
   session,
   thinkingText,
   initialDraft,
+  autoSendInitialDraft,
   resetToken,
   onClose,
   onDraftConsumed,
+  onInitialDraftAutoSent,
   onSupportAction,
   chat,
 }) {
   const { resetChat, messages, isThinking, sendFeedback, sendMessage } = chat;
   const chatScrollRef = useRef(null);
   const processedMessageIdsRef = useRef(new Set());
+  const autoSentDraftRef = useRef("");
 
   useEffect(() => {
     resetChat();
@@ -571,6 +574,44 @@ const ChatDrawer = memo(function ChatDrawer({
     },
     [detectVoiceMetadata, sendMessage, session?.session_token, session?.user?.user_id],
   );
+
+  useEffect(() => {
+    if (!visible || !autoSendInitialDraft) {
+      return;
+    }
+
+    const draft = String(initialDraft || "").trim();
+    if (!draft) {
+      return;
+    }
+
+    if (autoSentDraftRef.current === draft) {
+      return;
+    }
+
+    autoSentDraftRef.current = draft;
+    submitChat(draft, {
+      userId: session?.user?.user_id,
+      sessionToken: session?.session_token,
+    });
+    onDraftConsumed?.();
+    onInitialDraftAutoSent?.();
+  }, [
+    autoSendInitialDraft,
+    initialDraft,
+    onDraftConsumed,
+    onInitialDraftAutoSent,
+    session?.session_token,
+    session?.user?.user_id,
+    submitChat,
+    visible,
+  ]);
+
+  useEffect(() => {
+    if (!initialDraft) {
+      autoSentDraftRef.current = "";
+    }
+  }, [initialDraft]);
 
   if (!visible) {
     return null;
@@ -630,6 +671,7 @@ export default function Dashboard({ session, onLogout }) {
   const [forceReducedMotion, setForceReducedMotion] = useState(false);
   const [hasInteracted, setHasInteracted] = useState(false);
   const [chatDraftSeed, setChatDraftSeed] = useState("");
+  const [chatAutoSendSeed, setChatAutoSendSeed] = useState(false);
   const [chatResetToken, setChatResetToken] = useState(0);
   const [profileUser, setProfileUser] = useState(() => session?.user || {});
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -1035,6 +1077,7 @@ export default function Dashboard({ session, onLogout }) {
       ? `Can we continue from last time? We were focusing on ${topic}. Last note: ${summary}`
       : `Can we continue from last time? We were focusing on ${topic}.`;
     setChatDraftSeed(seeded);
+    setChatAutoSendSeed(true);
   }, [continuityMemory?.last_topic, continuityMemory?.summary]);
 
   const startFreshFromMemory = useCallback(() => {
@@ -1043,6 +1086,7 @@ export default function Dashboard({ session, onLogout }) {
     setShowChat(true);
     setHasInteracted(true);
     setChatDraftSeed("");
+    setChatAutoSendSeed(false);
   }, []);
 
   const sendVoiceFeedback = useCallback(
@@ -1164,15 +1208,6 @@ export default function Dashboard({ session, onLogout }) {
             className="rounded-full border-2 border-rose-400/50 bg-rose-500/20 px-3.5 py-1.5 text-sm font-bold text-rose-100 transition hover:-translate-y-0.5 hover:bg-rose-500/30 shadow-[0_0_15px_rgba(220,38,38,0.3)]"
           >
             🆘 SOS
-          </motion.button>
-          <motion.button
-            type="button"
-            onClick={() => setShowGamesPortal(true)}
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            className="rounded-full border border-indigo-400/50 bg-indigo-500/20 px-3.5 py-1.5 text-sm font-medium text-indigo-100 transition hover:-translate-y-0.5 hover:bg-indigo-500/30"
-          >
-            🎮 Games
           </motion.button>
           <button
             type="button"
@@ -1594,20 +1629,6 @@ export default function Dashboard({ session, onLogout }) {
                 </div>
               )}
             </div>
-            <span
-              className={`rounded-full border px-3 py-1 text-[11px] ${isNegativeEmotion(currentMood)
-                ? "border-rose-300/25 bg-rose-400/10 text-rose-100"
-                : "border-emerald-300/25 bg-emerald-400/10 text-emerald-100"}`}
-            >
-              Mood: {currentMood === "neutral" ? "Steady" : currentMood}
-            </span>
-            <button
-              type="button"
-              onClick={() => setShowSupportPopup(true)}
-              className="rounded-full border border-cyan-200/20 bg-cyan-500/10 px-3 py-1 text-[11px] text-cyan-100 transition hover:bg-cyan-500/20"
-            >
-              Need support?
-            </button>
           </motion.div>
 
           <div className="mt-8 grid w-full max-w-[600px] gap-3 sm:grid-cols-2">
@@ -1666,33 +1687,155 @@ export default function Dashboard({ session, onLogout }) {
           </div>
         </section>
 
-        <motion.div
+        <motion.section
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.55, delay: 0.18, ease: "easeInOut" }}
-          className="w-full max-w-[600px] rounded-[1.3rem] border border-white/14 bg-white/[0.035] p-4 shadow-[0_16px_34px_rgba(3,7,18,0.32)] backdrop-blur-md"
+          className="w-full max-w-[1150px] grid gap-4 lg:grid-cols-[1.3fr_1fr]"
         >
-          <div className="flex items-center justify-between">
-            <p className="text-[11px] uppercase tracking-[0.3em] text-cyan-100/64">About you</p>
-            <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] uppercase tracking-[0.22em] text-slate-200/70">
-              {memoryItems.length > 0 ? `${memoryItems.length} memories` : "New here"}
-            </span>
+          <div className="space-y-4">
+            <div className="rounded-[1.3rem] border border-white/14 bg-white/[0.035] p-4 shadow-[0_16px_34px_rgba(3,7,18,0.32)] backdrop-blur-md">
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] uppercase tracking-[0.3em] text-cyan-100/64">About you</p>
+                <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] uppercase tracking-[0.22em] text-slate-200/70">
+                  {memoryItems.length > 0 ? `${memoryItems.length} memories` : "New here"}
+                </span>
+              </div>
+
+              <div className="mt-4 rounded-[1.05rem] border border-white/10 bg-[linear-gradient(180deg,rgba(21,39,71,0.5),rgba(11,19,35,0.35))] px-4 py-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-sm font-medium text-white">{profileSummary.title}</p>
+                  <span
+                    className={`rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] ${isNegativeEmotion(currentMood)
+                      ? "border-rose-300/30 bg-rose-400/10 text-rose-100"
+                      : "border-emerald-300/30 bg-emerald-400/10 text-emerald-100"}`}
+                  >
+                    Your Mood (Live): {currentMood === "neutral" ? "Steady" : currentMood}
+                  </span>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-slate-100/84">{profileSummary.summary}</p>
+                <p className="mt-3 text-xs leading-5 text-cyan-100/72">{profileSummary.prompt}</p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowChat(true)}
+                className="mt-3 w-full rounded-full border border-white/12 bg-white/[0.04] px-3 py-2 text-sm text-slate-100/88 transition hover:-translate-y-0.5 hover:bg-white/[0.08]"
+              >
+                Open chat and talk it through
+              </button>
+            </div>
+
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.55, delay: 0.22, ease: "easeInOut" }}
+              className="rounded-[1.3rem] border border-indigo-200/20 bg-[linear-gradient(140deg,rgba(30,41,59,0.62),rgba(23,37,84,0.42))] p-4 shadow-[0_16px_34px_rgba(3,7,18,0.32)] backdrop-blur-md"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[11px] uppercase tracking-[0.3em] text-indigo-100/70">Games tab</p>
+                <span className="rounded-full border border-indigo-200/20 bg-indigo-400/12 px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] text-indigo-100/75">
+                  Mood reset
+                </span>
+              </div>
+              <p className="mt-3 text-sm font-medium text-white">So stressed? Try these to calm your mood.</p>
+              <p className="mt-1 text-xs leading-5 text-indigo-100/75">
+                One playful round can interrupt spiraling thoughts and give your mind a softer rhythm.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowGamesPortal(true)}
+                  className="rounded-full border border-indigo-200/30 bg-indigo-400/20 px-4 py-2 text-sm font-medium text-indigo-50 transition hover:-translate-y-0.5 hover:bg-indigo-400/30"
+                >
+                  Open calming games
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSupportMode("companion");
+                    setIsVisualBoost(true);
+                    window.setTimeout(() => setIsVisualBoost(false), 2200);
+                  }}
+                  className="rounded-full border border-white/16 bg-white/8 px-4 py-2 text-sm text-white transition hover:-translate-y-0.5 hover:bg-white/12"
+                >
+                  Sit with me first
+                </button>
+              </div>
+            </motion.div>
           </div>
 
-          <div className="mt-4 rounded-[1.05rem] border border-white/10 bg-[linear-gradient(180deg,rgba(21,39,71,0.5),rgba(11,19,35,0.35))] px-4 py-4">
-            <p className="text-sm font-medium text-white">{profileSummary.title}</p>
-            <p className="mt-2 text-sm leading-6 text-slate-100/84">{profileSummary.summary}</p>
-            <p className="mt-3 text-xs leading-5 text-cyan-100/72">{profileSummary.prompt}</p>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setShowChat(true)}
-            className="mt-3 w-full rounded-full border border-white/12 bg-white/[0.04] px-3 py-2 text-sm text-slate-100/88 transition hover:-translate-y-0.5 hover:bg-white/[0.08]"
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.55, delay: 0.22, ease: "easeInOut" }}
+            className="rounded-[1.3rem] border border-cyan-200/20 bg-[linear-gradient(140deg,rgba(8,47,73,0.56),rgba(30,64,175,0.36))] p-4 shadow-[0_16px_34px_rgba(3,7,18,0.32)] backdrop-blur-md"
           >
-            Open chat and talk it through
-          </button>
-        </motion.div>
+            <p className="text-[11px] uppercase tracking-[0.3em] text-cyan-100/70">Need support</p>
+            <h3 className="mt-2 text-xl font-medium text-white">Choose your support lane</h3>
+            <p className="mt-2 text-sm leading-6 text-cyan-50/82">
+              Tiny steps create big emotional shifts. Pick one now and let this moment turn in your favor.
+            </p>
+
+            <div className="mt-4 grid gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  localStorage.setItem("lifelens_support_pref", "companion");
+                  setSupportMode("companion");
+                  setShowSupportPopup(false);
+                  setIsVisualBoost(true);
+                  window.setTimeout(() => setIsVisualBoost(false), 2200);
+                }}
+                className="rounded-xl border border-amber-200/30 bg-amber-300/15 px-3 py-2 text-left text-sm font-medium text-amber-50 transition hover:-translate-y-0.5 hover:bg-amber-300/25"
+              >
+                Sit with me
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  localStorage.setItem("lifelens_support_pref", "breathing");
+                  setSupportMode("breathing");
+                  setShowSupportPopup(false);
+                }}
+                className="rounded-xl border border-cyan-200/25 bg-cyan-400/15 px-3 py-2 text-left text-sm text-cyan-50 transition hover:-translate-y-0.5 hover:bg-cyan-400/25"
+              >
+                Try something calming
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSupportMode("anxious");
+                  setShowSupportPopup(false);
+                }}
+                className="rounded-xl border border-rose-200/25 bg-rose-400/15 px-3 py-2 text-left text-sm text-rose-50 transition hover:-translate-y-0.5 hover:bg-rose-400/25"
+              >
+                Cheer me up
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSupportMode("calmingThoughts");
+                  setShowSupportPopup(false);
+                }}
+                className="rounded-xl border border-violet-200/25 bg-violet-400/15 px-3 py-2 text-left text-sm text-violet-50 transition hover:-translate-y-0.5 hover:bg-violet-400/25"
+              >
+                Slow racing thoughts
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowGamesPortal(true);
+                  setSupportMode(null);
+                  setShowSupportPopup(false);
+                }}
+                className="rounded-xl border border-indigo-200/25 bg-indigo-400/15 px-3 py-2 text-left text-sm text-indigo-50 transition hover:-translate-y-0.5 hover:bg-indigo-400/25"
+              >
+                Play a distraction game
+              </button>
+            </div>
+          </motion.div>
+        </motion.section>
 
         <div className="mt-6 w-full">
           <motion.div
@@ -1772,9 +1915,13 @@ export default function Dashboard({ session, onLogout }) {
               session={session}
               thinkingText={thinkingText}
               initialDraft={chatDraftSeed}
+              autoSendInitialDraft={chatAutoSendSeed}
               resetToken={chatResetToken}
               onClose={() => setShowChat(false)}
-              onDraftConsumed={() => setChatDraftSeed("")}
+              onDraftConsumed={() => {
+                setChatDraftSeed("");
+              }}
+              onInitialDraftAutoSent={() => setChatAutoSendSeed(false)}
               onSupportAction={handleSupportAction}
               chat={chat}
             />
@@ -1813,6 +1960,8 @@ export default function Dashboard({ session, onLogout }) {
                       localStorage.setItem("lifelens_support_pref", "companion");
                       setSupportMode("companion");
                       setShowSupportPopup(false);
+                      setIsVisualBoost(true);
+                      window.setTimeout(() => setIsVisualBoost(false), 2200);
                     }
                   },
                   {
@@ -1855,6 +2004,32 @@ export default function Dashboard({ session, onLogout }) {
           <CompanionWidget
             strategy={supportStrategy}
             onClose={() => setSupportMode(null)}
+            onOpenChat={(seedText) => {
+              const normalizedSeed = String(seedText || "I need support continuing this conversation.").trim();
+              setShowChat(true);
+              setHasInteracted(true);
+              setChatDraftSeed(normalizedSeed);
+              // For Sit with me voice handoff, avoid firing chat + voice at the same time.
+              // Keep the seed in chat input so user can send it manually if needed.
+              setChatAutoSendSeed(false);
+              void voice.continueWithPrompt(
+                `The user wants to continue from chat context. Begin gently, acknowledge their emotional check-in, and invite them to speak naturally. Context: ${normalizedSeed}`,
+                { submitTranscriptFallback: false },
+              );
+              setSupportMode(null);
+            }}
+            onSelectSupport={(mode) => {
+              if (mode === "play_game") {
+                setShowGamesPortal(true);
+                setSupportMode(null);
+                return;
+              }
+              if (mode === "breathing") {
+                setSupportMode("breathing");
+                return;
+              }
+              setSupportMode(null);
+            }}
           />
         )}
 
