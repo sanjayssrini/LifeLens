@@ -308,7 +308,8 @@ class ChatService:
             strategy_data = self.cheerup_service.generate_strategy(
                 emotion=emotion_data["primary_emotion"],
                 intensity=emotion_data["intensity"],
-                user_memory={} # Pass empty dict for now, or extract traits if available
+                user_memory={}, # Pass empty dict for now, or extract traits if available
+                message=processed_text
             )
 
         strategy_directives = ""

@@ -7,6 +7,7 @@ import { useVapiVoiceAgent } from "../hooks/useVapiVoiceAgent";
 import CompanionWidget from "../components/CompanionWidget";
 import BreathingOverlay from "../components/BreathingOverlay";
 import InsightCard from "../components/InsightCard";
+import GamesPortal from "../components/GamesPortal";
 import CheerUpOverlay from "../components/CheerUpOverlay";
 import RacingThoughtsOverlay from "../components/RacingThoughtsOverlay";
 import GentleRoutineOverlay from "../components/GentleRoutineOverlay";
@@ -545,7 +546,7 @@ const ChatDrawer = memo(function ChatDrawer({
       
       const { intensity, extra_action, strategy } = lastMessage.meta;
       
-      if (intensity > 0.6 && extra_action) {
+      if ((intensity > 0.6 && extra_action) || extra_action === "play_game") {
         onSupportAction?.({ extra_action, strategy });
       }
       
@@ -643,6 +644,7 @@ export default function Dashboard({ session, onLogout }) {
   const [showSupportPopup, setShowSupportPopup] = useState(false);
   const [supportStrategy, setSupportStrategy] = useState("companion");
   const [isVisualBoost, setIsVisualBoost] = useState(false);
+  const [showGamesPortal, setShowGamesPortal] = useState(false);
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const [languageSelection, setLanguageSelection] = useState({ mode: "detected", value: "en" });
   const [showSOSModal, setShowSOSModal] = useState(false);
@@ -863,8 +865,11 @@ export default function Dashboard({ session, onLogout }) {
       return;
     }
 
-    if (extra_action === "companion" || extra_action === "breathing") {
+    if (extra_action === "companion" || extra_action === "breathing" || extra_action === "play_game") {
       if (!supportMode) {
+        if (extra_action === "play_game") {
+          setSupportMode("play_game");
+        }
         setShowSupportPopup(true);
       }
       return;
@@ -1159,6 +1164,15 @@ export default function Dashboard({ session, onLogout }) {
             className="rounded-full border-2 border-rose-400/50 bg-rose-500/20 px-3.5 py-1.5 text-sm font-bold text-rose-100 transition hover:-translate-y-0.5 hover:bg-rose-500/30 shadow-[0_0_15px_rgba(220,38,38,0.3)]"
           >
             🆘 SOS
+          </motion.button>
+          <motion.button
+            type="button"
+            onClick={() => setShowGamesPortal(true)}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            className="rounded-full border border-indigo-400/50 bg-indigo-500/20 px-3.5 py-1.5 text-sm font-medium text-indigo-100 transition hover:-translate-y-0.5 hover:bg-indigo-500/30"
+          >
+            🎮 Games
           </motion.button>
           <button
             type="button"
@@ -1779,6 +1793,18 @@ export default function Dashboard({ session, onLogout }) {
                 Do you want a little support right now?
               </p>
               <div className="flex flex-col gap-2">
+                {supportMode === "play_game" && (
+                  <button
+                    onClick={() => {
+                      setShowGamesPortal(true);
+                      setShowSupportPopup(false);
+                      setSupportMode(null);
+                    }}
+                    className="w-full rounded-lg bg-indigo-500/20 py-2 text-sm text-indigo-100 transition hover:bg-indigo-500/40 font-bold border border-indigo-400/30"
+                  >
+                    Play a Distraction Game
+                  </button>
+                )}
                 {[
                   {
                     id: "companion",
@@ -1874,6 +1900,10 @@ export default function Dashboard({ session, onLogout }) {
                }
             }}
           />
+        )}
+
+        {showGamesPortal && (
+          <GamesPortal onClose={() => setShowGamesPortal(false)} />
         )}
 
         <AnimatePresence>

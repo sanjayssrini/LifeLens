@@ -28,7 +28,7 @@ class CheerupService:
             
         return profile
 
-    def generate_strategy(self, emotion: str, intensity: float, user_memory: dict, memory_lines: list[str] | None = None) -> dict:
+    def generate_strategy(self, emotion: str, intensity: float, user_memory: dict, memory_lines: list[str] | None = None, message: str = "") -> dict:
         fallback = {
             "strategy": "calm",
             "tone": "soft and supportive",
@@ -64,7 +64,7 @@ class CheerupService:
         if not base_strategy:
             base_strategy = "companion"
             
-        # Determine Extra Action based on intensity
+        # Determine Extra Action based on intensity or emotion
         extra_action = None
         if intensity > 0.75:
             if base_strategy == "calm":
@@ -73,6 +73,12 @@ class CheerupService:
                 extra_action = "visual_boost"
             elif base_strategy == "companion":
                 extra_action = "conversation"
+                
+        # Override for games logic: if sad or anxious or explicitly talking about games
+        message_lower = message.lower()
+        mentions_games = any(w in message_lower for w in ["game", "games", "play"])
+        if mentions_games or (emotion in ["sad", "anxious", "overwhelmed"] and intensity > 0.6):
+             extra_action = "play_game"
 
         # Construct Memory Traits String
         traits = []
@@ -169,6 +175,8 @@ class CheerupService:
                 directives.append("* Add slight uplifting or expressive tone.")
             elif extra_action == "conversation":
                 directives.append("* Include a soft follow-up question.")
+            elif extra_action == "play_game":
+                directives.append("* CRITICAL: The user seems sad, anxious, or interested in games. Gently ask them: 'Would you like to play a quick game to take your mind off things?'")
             
         if strategy == "companion" or intensity > 0.7:
             directives.append("")
