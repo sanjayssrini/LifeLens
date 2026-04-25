@@ -30,18 +30,18 @@ export default function VoiceOrb({ state = "idle" }) {
         className="absolute h-full w-full rounded-full bg-cyan-300/25 blur-3xl"
         variants={ringVariants}
         animate={resolvedState}
-        transition={{ duration: resolvedState === "thinking" ? 4.8 : 2.2, repeat: Infinity, ease: "easeInOut" }}
+        transition={{ duration: resolvedState === "thinking" ? 2.8 : 1.4, repeat: Infinity, ease: "easeInOut" }}
       />
       <motion.div
         className="absolute h-[72%] w-[72%] rounded-full border border-cyan-100/20 bg-gradient-to-br from-white/[0.22] to-white/[0.06] backdrop-blur-xl"
         animate={resolvedState === "thinking" ? { rotate: [0, 180, 360] } : { rotate: [0, 6, -6, 0] }}
-        transition={{ duration: resolvedState === "thinking" ? 8 : 5, repeat: Infinity, ease: "easeInOut" }}
+        transition={{ duration: resolvedState === "thinking" ? 4.6 : 2.8, repeat: Infinity, ease: "easeInOut" }}
       />
       <motion.div
         className="relative flex h-24 w-24 items-center justify-center rounded-full border border-cyan-100/35 bg-slate-900/40 text-xs font-semibold uppercase tracking-[0.2em] text-cyan-100 sm:h-28 sm:w-28"
         variants={coreVariants}
         animate={resolvedState}
-        transition={{ duration: 1.9, repeat: Infinity, ease: "easeInOut" }}
+        transition={{ duration: 1.1, repeat: Infinity, ease: "easeInOut" }}
       >
         {stateLabel[resolvedState]}
       </motion.div>
@@ -53,7 +53,7 @@ export default function VoiceOrb({ state = "idle" }) {
               key={`wave-${item}`}
               className="w-1 rounded-full bg-cyan-200/90"
               animate={{ height: [8, 20 - (item % 2) * 4, 8], opacity: [0.45, 1, 0.45] }}
-              transition={{ duration: 0.9, repeat: Infinity, delay: item * 0.1, ease: "easeInOut" }}
+              transition={{ duration: 0.55, repeat: Infinity, delay: item * 0.08, ease: "easeInOut" }}
             />
           ))}
         </div>

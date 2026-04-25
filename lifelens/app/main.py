@@ -2,12 +2,13 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.routes.system import router as system_router
 from app.routes.vapi import router as vapi_router
 from app.services.action_engine import ActionEngine
-from app.services.conversation_service import ConversationService
+from app.services.chat_service import ChatService
 from app.services.intent_engine import IntentCascadeEngine
 from app.services.life_insight_service import LifeInsightService
 from app.services.memory_service import MemoryService
@@ -29,6 +30,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(GZipMiddleware, minimum_size=512)
 
     memory_service = MemoryService(settings)
     memory_service.ensure_collection()
@@ -45,8 +47,9 @@ def create_app() -> FastAPI:
         insight_service=insight_service,
         state_store=state_store,
         user_service=user_service,
+        fast_mode=settings.fast_mode,
     )
-    conversation_service = ConversationService(
+    chat_service = ChatService(
         settings=settings,
         memory_service=memory_service,
         insight_service=insight_service,
@@ -54,7 +57,8 @@ def create_app() -> FastAPI:
 
     app.state.state_store = state_store
     app.state.vapi_handler = vapi_handler
-    app.state.conversation_service = conversation_service
+    app.state.chat_service = chat_service
+    app.state.conversation_service = chat_service
     app.state.user_service = user_service
     app.state.session_service = session_service
     app.state.memory_service = memory_service

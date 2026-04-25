@@ -1,7 +1,10 @@
 import hashlib
 import math
 import uuid
+from collections import OrderedDict
 from datetime import datetime, timezone
+from threading import Lock
+from time import monotonic
 from typing import Any, Dict, List
 
 import google.generativeai as genai
@@ -29,6 +32,31 @@ class MemoryService:
             api_key=settings.qdrant_api_key or None,
             check_compatibility=False,
         )
+        self._embedding_cache: OrderedDict[str, List[float]] = OrderedDict()
+        self._embedding_cache_lock = Lock()
+        self._embedding_cache_max = 512
+        self._recent_cache: Dict[str, tuple[float, List[Dict[str, Any]]]] = {}
+        self._recent_cache_ttl_sec = 2.0
+        self._recent_cache_lock = Lock()
+
+    def _get_cached_embedding(self, text: str) -> List[float] | None:
+        with self._embedding_cache_lock:
+            cached = self._embedding_cache.get(text)
+            if cached is None:
+                return None
+            self._embedding_cache.move_to_end(text)
+            return list(cached)
+
+    def _set_cached_embedding(self, text: str, vector: List[float]) -> None:
+        with self._embedding_cache_lock:
+            self._embedding_cache[text] = list(vector)
+            self._embedding_cache.move_to_end(text)
+            while len(self._embedding_cache) > self._embedding_cache_max:
+                self._embedding_cache.popitem(last=False)
+
+    def _invalidate_recent_cache(self, user_id: str) -> None:
+        with self._recent_cache_lock:
+            self._recent_cache.pop(user_id, None)
 
     def _require_client(self) -> QdrantClient:
         if self.client is None:
@@ -77,8 +105,14 @@ class MemoryService:
         return [v / mag for v in vector]
 
     def embed(self, text: str) -> List[float]:
+        cached = self._get_cached_embedding(text)
+        if cached is not None:
+            return cached
+
         if not self.gemini_enabled:
-            return self._hash_embedding(text)
+            vector = self._hash_embedding(text)
+            self._set_cached_embedding(text, vector)
+            return vector
 
         try:
             result = genai.embed_content(
@@ -88,10 +122,16 @@ class MemoryService:
             )
             values = result.get("embedding", [])
             if not values:
-                return self._hash_embedding(text)
-            return [float(v) for v in values]
+                vector = self._hash_embedding(text)
+                self._set_cached_embedding(text, vector)
+                return vector
+            vector = [float(v) for v in values]
+            self._set_cached_embedding(text, vector)
+            return vector
         except Exception:
-            return self._hash_embedding(text)
+            vector = self._hash_embedding(text)
+            self._set_cached_embedding(text, vector)
+            return vector
 
     def store_interaction(self, user_id: str, transcript: str, intent: IntentAnalysis, metadata: Dict[str, Any]) -> None:
         client = self._require_client()
@@ -101,6 +141,7 @@ class MemoryService:
             "transcript": transcript,
             "intent": intent.model_dump(),
             "metadata": metadata,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "entry_type": "interaction",
         }
         client.upsert(
@@ -113,6 +154,7 @@ class MemoryService:
                 )
             ],
         )
+        self._invalidate_recent_cache(user_id)
 
     def search_similar(self, transcript: str, user_id: str, limit: int = 3) -> List[Dict[str, Any]]:
         client = self._require_client()
@@ -165,14 +207,22 @@ class MemoryService:
                 )
             ],
         )
+        self._invalidate_recent_cache(user_id)
         return entry
 
     def retrieve_user_memory(self, user_id: str, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         return self.search_similar(transcript=query, user_id=user_id, limit=limit)
 
     def recent_user_memory(self, user_id: str, limit: int = 5) -> List[Dict[str, Any]]:
+        now = monotonic()
+        with self._recent_cache_lock:
+            cached = self._recent_cache.get(user_id)
+            if cached and (now - cached[0]) <= self._recent_cache_ttl_sec:
+                return cached[1][: max(1, limit)]
+
         client = self._require_client()
         try:
+            fetch_limit = max(24, max(1, limit) * 6)
             records, _ = client.scroll(
                 collection_name=self.collection_name,
                 scroll_filter=Filter(
@@ -183,16 +233,51 @@ class MemoryService:
                         )
                     ]
                 ),
-                limit=max(1, limit),
+                limit=fetch_limit,
                 with_payload=True,
                 with_vectors=False,
             )
             payloads = [record.payload for record in records if record.payload]
             if payloads:
-                return payloads[::-1]
+                payloads.sort(key=lambda item: str(item.get("timestamp") or ""), reverse=True)
+                result = payloads[: max(1, limit)]
+                with self._recent_cache_lock:
+                    self._recent_cache[user_id] = (now, payloads[:12])
+                return result
             return []
         except Exception as exc:
             raise RuntimeError("Failed to fetch recent user memory from Qdrant.") from exc
+
+    def store_feedback(
+        self,
+        user_id: str,
+        response_id: str,
+        feedback: str,
+        metadata: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        normalized_feedback = "positive" if feedback == "positive" else "negative"
+        entry = {
+            "user_id": user_id,
+            "response_id": response_id,
+            "feedback": normalized_feedback,
+            "metadata": metadata or {},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "entry_type": "feedback",
+            "reinforcement": "reinforce_pattern" if normalized_feedback == "positive" else "reduce_similar_suggestions",
+        }
+        client = self._require_client()
+        vector = self.embed(f"{response_id} {normalized_feedback} {entry['reinforcement']}")
+        client.upsert(
+            collection_name=self.collection_name,
+            points=[
+                PointStruct(
+                    id=str(uuid.uuid4()),
+                    vector=vector,
+                    payload=entry,
+                )
+            ],
+        )
+        return entry
 
     def clear_user_memory(self, user_id: str) -> None:
         client = self._require_client()
@@ -208,6 +293,7 @@ class MemoryService:
                     ]
                 ),
             )
+            self._invalidate_recent_cache(user_id)
         except Exception as exc:
             raise RuntimeError("Failed to clear user memory in Qdrant.") from exc
 
@@ -238,6 +324,7 @@ class MemoryService:
                 )
             ],
         )
+        self._invalidate_recent_cache(user_id)
         return entry
 
     def recent_insights(self, user_id: str, limit: int = 3) -> List[Dict[str, Any]]:

@@ -10,7 +10,7 @@ export default function TypingIndicator({ label = "LifeLens is thinking" }) {
             key={`typing-dot-${dot}`}
             className="h-1.5 w-1.5 rounded-full bg-cyan-200"
             animate={{ opacity: [0.25, 1, 0.25], y: [0, -2, 0] }}
-            transition={{ duration: 0.9, delay: dot * 0.12, repeat: Infinity, ease: "easeInOut" }}
+            transition={{ duration: 0.5, delay: dot * 0.08, repeat: Infinity, ease: "easeInOut" }}
           />
         ))}
       </div>

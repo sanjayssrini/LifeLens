@@ -1,0 +1,582 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+
+import { useSpeechPlayback } from "../hooks/useSpeechPlayback";
+import { useSupportChat } from "../hooks/useSupportChat";
+import { useVapiVoiceAgent } from "../hooks/useVapiVoiceAgent";
+
+const suggestionChips = ["I lost my job", "I’m stressed", "I need help"];
+const thinkingPhases = ["Thinking...", "Understanding...", "Responding..."];
+
+function getTimeGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+function recentConversationSummary(memory) {
+  const latest = (memory || [])
+    .slice()
+    .reverse()
+    .find((item) => String(item?.content || item?.transcript || "").trim().length > 0);
+
+  const text = String(latest?.content || latest?.transcript || "").trim();
+  if (!text) {
+    return {
+      title: "Recent conversation",
+      detail: "No recent conversation yet.",
+    };
+  }
+
+  return {
+    title: "Recent conversation",
+    detail: text.length > 130 ? `${text.slice(0, 130)}...` : text,
+  };
+}
+
+function createParticles() {
+  return Array.from({ length: 22 }).map((_, index) => ({
+    id: `particle-${index}`,
+    size: 2 + (index % 4),
+    left: `${4 + (index * 4.4) % 96}%`,
+    top: `${6 + (index * 8.1) % 86}%`,
+    drift: index % 2 === 0 ? 12 : -10,
+    delay: index * 0.18,
+    duration: 18 + index * 0.55,
+  }));
+}
+
+function formatClock(ts) {
+  const d = new Date(ts || Date.now());
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+export default function Dashboard({ session, onLogout }) {
+  const reduceMotion = useReducedMotion();
+  const [ripples, setRipples] = useState([]);
+  const [activeChipIndex, setActiveChipIndex] = useState(-1);
+  const [showChat, setShowChat] = useState(false);
+  const [hasInteracted, setHasInteracted] = useState(false);
+  const [phaseIndex, setPhaseIndex] = useState(0);
+  const [chatInput, setChatInput] = useState("");
+  const chipTimeoutRef = useRef(null);
+  const particles = useMemo(() => createParticles(), []);
+
+  const speech = useSpeechPlayback();
+  const handleAssistantReply = useCallback(
+    (text) => {
+      if (!showChat) {
+        return;
+      }
+      speech.speak(text);
+    },
+    [showChat, speech],
+  );
+
+  const chat = useSupportChat({ onAssistantReply: handleAssistantReply });
+  const voice = useVapiVoiceAgent({
+    userId: session?.user?.user_id || "",
+    sessionToken: session?.session_token || "",
+  });
+
+  const userName = session?.user?.name || "Sanjay";
+  const firstName = userName.split(" ").filter(Boolean)[0] || "Sanjay";
+  const greeting = getTimeGreeting();
+
+  const recentConversation = useMemo(
+    () => recentConversationSummary(session?.user?.memory || []),
+    [session?.user?.memory],
+  );
+
+  const isListening = voice.connected || voice.activity === "listening";
+  const isThinking = voice.connecting || voice.activity === "thinking";
+  const isSpeaking = voice.activity === "speaking";
+
+  const statusText = useMemo(() => {
+    if (isListening) {
+      return "Listening...";
+    }
+    if (isThinking || isSpeaking) {
+      return thinkingPhases[phaseIndex];
+    }
+    return "Tap to speak";
+  }, [isListening, isSpeaking, isThinking, phaseIndex]);
+
+  const liveTranscript = useMemo(
+    () => ({
+      user: voice.userTranscript?.trim() || "",
+      assistant: voice.assistantTranscript?.trim() || "",
+    }),
+    [voice.assistantTranscript, voice.userTranscript],
+  );
+
+  useEffect(() => {
+    if (!showChat) {
+      speech.stop();
+    }
+  }, [showChat, speech]);
+
+  useEffect(() => {
+    if (voice.connected || voice.connecting || voice.activity !== "idle") {
+      setHasInteracted(true);
+    }
+  }, [voice.activity, voice.connected, voice.connecting]);
+
+  useEffect(() => {
+    const shouldCycle = isThinking || isSpeaking;
+    if (!shouldCycle) {
+      setPhaseIndex(0);
+      return undefined;
+    }
+
+    const timer = window.setInterval(() => {
+      setPhaseIndex((current) => (current + 1) % thinkingPhases.length);
+    }, 1200);
+
+    return () => window.clearInterval(timer);
+  }, [isThinking, isSpeaking]);
+
+  useEffect(() => {
+    return () => {
+      if (chipTimeoutRef.current) {
+        window.clearTimeout(chipTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const triggerVoice = useCallback(() => {
+    setHasInteracted(true);
+    const rippleId = Date.now() + Math.random();
+    setRipples([rippleId]);
+    voice.toggle();
+  }, [voice]);
+
+  const triggerSuggestion = useCallback(
+    (index) => {
+      setHasInteracted(true);
+      setActiveChipIndex(index);
+      const rippleId = Date.now() + Math.random();
+      setRipples([rippleId]);
+
+      if (!voice.connected && !voice.connecting) {
+        voice.toggle();
+      }
+
+      if (chipTimeoutRef.current) {
+        window.clearTimeout(chipTimeoutRef.current);
+      }
+      chipTimeoutRef.current = window.setTimeout(() => {
+        setActiveChipIndex(-1);
+      }, 420);
+    },
+    [voice],
+  );
+
+  const submitChat = useCallback(() => {
+    const text = chatInput.trim();
+    if (!text) {
+      return;
+    }
+
+    chat.sendMessage(text, "text", {
+      userId: session?.user?.user_id,
+      sessionToken: session?.session_token,
+      demoMode: false,
+    });
+    setChatInput("");
+  }, [chat, chatInput, session?.session_token, session?.user?.user_id]);
+
+  return (
+    <div className="relative min-h-screen overflow-hidden px-5 py-5 text-white sm:px-8">
+      <div className="pointer-events-none absolute inset-0 -z-20 overflow-hidden">
+        <motion.div
+          className="absolute inset-[-18%] bg-[radial-gradient(circle_at_48%_10%,rgba(64,139,229,0.16),transparent_34%),radial-gradient(circle_at_12%_22%,rgba(103,126,224,0.12),transparent_28%),radial-gradient(circle_at_82%_68%,rgba(94,146,220,0.1),transparent_26%),linear-gradient(120deg,#050d1c_0%,#07142c_48%,#040a17_100%)]"
+          animate={reduceMotion ? { opacity: 1 } : { backgroundPosition: ["0% 0%", "100% 100%", "0% 0%"] }}
+          transition={{ duration: 34, repeat: Infinity, ease: "easeInOut" }}
+        />
+
+        <motion.div
+          className="absolute inset-0 opacity-55"
+          style={{
+            backgroundImage:
+              "repeating-linear-gradient(180deg, transparent 0px, transparent 16px, rgba(148,163,184,0.08) 17px, transparent 18px)",
+          }}
+          animate={reduceMotion ? { opacity: 0.24 } : { opacity: [0.16, 0.28, 0.16], y: [0, 6, 0] }}
+          transition={{ duration: 12, repeat: Infinity, ease: "easeInOut" }}
+        />
+
+        {particles.map((particle) => (
+          <motion.span
+            key={particle.id}
+            className="absolute rounded-full bg-cyan-100/50 blur-[0.8px]"
+            style={{ width: `${particle.size}px`, height: `${particle.size}px`, left: particle.left, top: particle.top }}
+            animate={
+              reduceMotion
+                ? { opacity: 0.2 }
+                : { y: [0, -12, 0], x: [0, particle.drift, 0], opacity: [0.08, 0.32, 0.08] }
+            }
+            transition={{ duration: particle.duration, delay: particle.delay, repeat: Infinity, ease: "easeInOut" }}
+          />
+        ))}
+      </div>
+
+      <motion.header
+        initial={{ opacity: 0, y: -12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.55, ease: "easeInOut" }}
+        className="mx-auto flex w-full max-w-[1150px] items-start justify-between"
+      >
+        <div className="flex items-start gap-3">
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.44em] text-cyan-100/55">LifeLens</p>
+            <h1 className="mt-2 text-3xl font-medium tracking-tight text-white sm:text-[2rem]">
+              {greeting}, {firstName}
+            </h1>
+            <p className="mt-1.5 text-sm text-slate-200/72">I’m here for you.</p>
+          </div>
+          <div className="mt-1 flex h-12 w-12 items-center justify-center rounded-full border border-white/18 bg-white/[0.06] shadow-[0_8px_18px_rgba(3,7,18,0.3)]">
+            <span className="text-lg">👤</span>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={onLogout}
+          className="mt-1 rounded-full border border-white/14 bg-white/[0.05] px-3.5 py-1.5 text-sm text-slate-100/86 transition hover:-translate-y-0.5 hover:bg-white/[0.09]"
+        >
+          Logout
+        </button>
+      </motion.header>
+
+      <main className="mx-auto mt-2 grid min-h-[calc(100vh-7.5rem)] w-full max-w-[1150px] grid-cols-1 items-center gap-8 lg:grid-cols-[minmax(0,1fr)_280px]">
+        <section className="relative flex min-h-[70vh] flex-col items-center justify-center">
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <motion.div
+              className="h-[24rem] w-[24rem] rounded-full bg-cyan-300/8 blur-[78px]"
+              animate={reduceMotion ? { opacity: 0.45 } : { opacity: [0.3, 0.56, 0.3], scale: [1, 1.04, 1] }}
+              transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
+            />
+          </div>
+
+          <motion.div
+            className="pointer-events-none absolute left-[6%] right-[6%] top-[38%] h-[76px]"
+            animate={reduceMotion ? { opacity: 0.22 } : { opacity: [0.16, 0.32, 0.16], x: [-6, 6, -6] }}
+            transition={{ duration: 6.5, repeat: Infinity, ease: "easeInOut" }}
+          >
+            {[0, 1, 2, 3, 4].map((line) => (
+              <div
+                key={`wave-${line}`}
+                className="absolute left-0 right-0 h-px bg-gradient-to-r from-transparent via-cyan-100/35 to-transparent"
+                style={{ top: `${8 + line * 13}px`, transform: `skewY(${line % 2 === 0 ? 7 : -7}deg)` }}
+              />
+            ))}
+          </motion.div>
+
+          <AnimatePresence>
+            {(isThinking || isSpeaking) && (
+              <motion.div
+                key="live-lines"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="pointer-events-none absolute inset-0 flex items-center justify-center"
+              >
+                {[0, 1, 2].map((line) => (
+                  <motion.span
+                    key={`live-line-${line}`}
+                    className="absolute h-px w-[64%] rounded-full bg-gradient-to-r from-transparent via-cyan-100/36 to-transparent"
+                    style={{ top: `${46 + line * 5}%` }}
+                    animate={
+                      reduceMotion
+                        ? { opacity: 0.14 }
+                        : { scaleX: [0.86, 1.02, 0.86], opacity: [0.08, 0.28, 0.08] }
+                    }
+                    transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut", delay: line * 0.1 }}
+                  />
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <motion.button
+            type="button"
+            onClick={triggerVoice}
+            whileHover={{ y: -2, scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            animate={
+              reduceMotion
+                ? { scale: 1 }
+                : isListening
+                  ? { scale: [1, 1.08, 1], boxShadow: ["0 18px 48px rgba(2,6,23,0.35)", "0 26px 66px rgba(34,211,238,0.22)", "0 18px 48px rgba(2,6,23,0.35)"] }
+                  : isSpeaking
+                    ? { scale: [1, 1.04, 1], boxShadow: ["0 18px 48px rgba(2,6,23,0.35)", "0 24px 62px rgba(103,232,249,0.2)", "0 18px 48px rgba(2,6,23,0.35)"] }
+                    : { scale: [0.99, 1.01, 0.99] }
+            }
+            transition={{ duration: 0.8, repeat: Infinity, ease: "easeInOut" }}
+            className="group relative z-10 flex aspect-square w-[min(67vw,18rem)] items-center justify-center rounded-full bg-[linear-gradient(145deg,rgba(73,146,233,0.84),rgba(62,208,189,0.8)_54%,rgba(123,117,210,0.82))] shadow-[0_18px_48px_rgba(2,6,23,0.36),0_0_44px_rgba(56,189,248,0.16)]"
+          >
+            <motion.div
+              className="absolute inset-[10%] rounded-full bg-[radial-gradient(circle_at_34%_28%,rgba(255,255,255,0.28),rgba(255,255,255,0.08)_36%,rgba(255,255,255,0.02)_66%,transparent_74%)]"
+              animate={reduceMotion ? { opacity: 0.85 } : { rotate: [0, 12, 0], opacity: [0.74, 0.92, 0.74] }}
+              transition={{ duration: 6.5, repeat: Infinity, ease: "easeInOut" }}
+            />
+
+            <AnimatePresence>
+              {isThinking && (
+                <motion.span
+                  key="orb-shimmer"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 0.24, x: ["-62%", "64%"] }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
+                  className="absolute inset-y-[18%] h-[64%] w-[32%] rounded-full bg-gradient-to-r from-transparent via-white/48 to-transparent blur-md"
+                />
+              )}
+            </AnimatePresence>
+
+            <AnimatePresence>
+              {ripples.map((ripple) => (
+                <motion.span
+                  key={ripple}
+                  initial={{ opacity: 0.36, scale: 0.78 }}
+                  animate={{ opacity: 0, scale: 1.16 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.7, ease: "easeInOut" }}
+                  className="absolute inset-0 rounded-full border border-white/34"
+                />
+              ))}
+            </AnimatePresence>
+
+            <div className="relative z-10 flex max-w-[13rem] flex-col items-center text-center">
+              <p className="text-[11px] uppercase tracking-[0.3em] text-white/82">Tap to speak</p>
+              <h2 className="mt-3 text-[2.05rem] font-semibold leading-[1.03] text-white">
+                Say anything.
+                <span className="block">I’m listening.</span>
+              </h2>
+              <div className="mt-4 flex items-center gap-1.5 text-xs text-cyan-50/85">
+                <span>STATUS:</span>
+                <AnimatePresence mode="wait">
+                  <motion.span
+                    key={statusText}
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -4 }}
+                    transition={{ duration: 0.45, ease: "easeInOut" }}
+                    className="font-medium"
+                  >
+                    {statusText}
+                  </motion.span>
+                </AnimatePresence>
+                <motion.span
+                  className="inline-block h-1.5 w-1.5 rounded-full bg-cyan-200"
+                  animate={reduceMotion ? { opacity: 0.7 } : { opacity: [0.35, 1, 0.35] }}
+                  transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
+                />
+              </div>
+            </div>
+          </motion.button>
+
+          <button
+            type="button"
+            onClick={triggerVoice}
+            className="mt-4 rounded-full border border-white/18 bg-white/[0.08] px-5 py-2 text-sm text-slate-100/92 transition hover:-translate-y-0.5 hover:bg-white/[0.13]"
+          >
+            {isListening ? "Pause / Mute" : "Start / Unmute"}
+          </button>
+
+          <div className="mt-5 grid w-full max-w-[460px] gap-2 sm:grid-cols-2">
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.55, delay: 0.1, ease: "easeInOut" }}
+              className="rounded-[1rem] border border-cyan-200/28 bg-[linear-gradient(180deg,rgba(21,39,71,0.58),rgba(23,36,60,0.42))] px-3 py-2 shadow-[0_12px_24px_rgba(5,11,24,0.32)] backdrop-blur-md"
+            >
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] uppercase tracking-[0.24em] text-cyan-100/72">You</p>
+                <span className="text-[10px] text-slate-300/65">{formatClock(Date.now())}</span>
+              </div>
+              <p className="mt-1 text-xs leading-5 text-white/86">
+                {liveTranscript.user || "Your live transcript appears here..."}
+              </p>
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.55, delay: 0.16, ease: "easeInOut" }}
+              className="rounded-[1rem] border border-emerald-200/24 bg-[linear-gradient(180deg,rgba(22,44,58,0.58),rgba(24,39,49,0.42))] px-3 py-2 shadow-[0_12px_24px_rgba(5,11,24,0.32)] backdrop-blur-md"
+            >
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] uppercase tracking-[0.24em] text-cyan-100/72">LifeLens</p>
+                <div className="flex items-center gap-1">
+                  {isThinking && (
+                    <div className="flex items-center gap-1">
+                      {[0, 1, 2].map((dot) => (
+                        <motion.span
+                          key={`thinking-dot-${dot}`}
+                          className="h-1 w-1 rounded-full bg-cyan-100/72"
+                          animate={reduceMotion ? { opacity: 0.6 } : { opacity: [0.25, 0.9, 0.25], y: [0, -1, 0] }}
+                          transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut", delay: dot * 0.12 }}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  <span className="text-[10px] text-slate-300/65">{formatClock(Date.now())}</span>
+                </div>
+              </div>
+              <p className="mt-1 text-xs leading-5 text-white/86">
+                {liveTranscript.assistant || (isThinking ? "Thinking..." : "Assistant transcript appears here...")}
+              </p>
+            </motion.div>
+          </div>
+        </section>
+
+        <aside className="relative self-center">
+          <div className="absolute -left-10 top-1/2 hidden -translate-y-1/2 flex-col gap-2 lg:flex">
+            <button className="h-8 w-8 rounded-full border border-white/16 bg-white/[0.05] text-slate-100/70">🔊</button>
+            <button className="h-8 w-8 rounded-full border border-white/16 bg-white/[0.05] text-slate-100/70">⚙️</button>
+          </div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.55, delay: 0.18, ease: "easeInOut" }}
+            className="w-full rounded-[1.3rem] border border-white/14 bg-white/[0.035] p-4 shadow-[0_16px_34px_rgba(3,7,18,0.32)] backdrop-blur-md lg:w-[270px]"
+          >
+            <p className="text-[11px] uppercase tracking-[0.3em] text-cyan-100/64">Recent conversation</p>
+            <div className="mt-3 max-h-[176px] overflow-y-auto pr-1 text-sm leading-6 text-slate-100/86">
+              <p className="font-medium">{recentConversation.title}</p>
+              <p className="mt-2">{recentConversation.detail}</p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowChat(true)}
+              className="mt-4 w-full rounded-full bg-gradient-to-r from-cyan-300/88 to-sky-400/88 px-4 py-2 text-sm font-medium text-slate-950 transition hover:-translate-y-0.5 hover:shadow-[0_10px_24px_rgba(34,211,238,0.32)]"
+            >
+              Continue in chat
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowChat(true)}
+              className="mt-3 w-full text-right text-xs text-cyan-100/72 underline underline-offset-4 transition hover:text-cyan-100"
+            >
+              View all conversation history
+            </button>
+          </motion.div>
+        </aside>
+      </main>
+
+      <motion.footer
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.55, delay: 0.24, ease: "easeInOut" }}
+        className="pointer-events-auto fixed bottom-4 left-1/2 z-20 w-[min(100%-1rem,860px)] -translate-x-1/2"
+      >
+        <div className="rounded-full border border-white/12 bg-white/[0.04] px-3 py-2 backdrop-blur-md">
+          <div className="flex flex-col items-center gap-2 sm:flex-row sm:justify-between">
+            <p className="text-[11px] uppercase tracking-[0.3em] text-cyan-100/58">Suggested ways to begin</p>
+            <div className="flex flex-wrap justify-center gap-2">
+              {suggestionChips.map((chip, index) => (
+                <motion.button
+                  key={chip}
+                  type="button"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.45, delay: 0.2 + index * 0.08, ease: "easeInOut" }}
+                  whileHover={{ y: -2 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => triggerSuggestion(index)}
+                  className="relative overflow-hidden rounded-full border border-white/12 bg-white/[0.045] px-3.5 py-1.5 text-sm text-slate-100/86 transition hover:bg-white/[0.085]"
+                >
+                  <AnimatePresence>
+                    {activeChipIndex === index && (
+                      <motion.span
+                        key={`chip-ripple-${index}`}
+                        initial={{ opacity: 0.4, scale: 0.7 }}
+                        animate={{ opacity: 0, scale: 1.12 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.45, ease: "easeInOut" }}
+                        className="absolute inset-0 rounded-full border border-cyan-100/30"
+                      />
+                    )}
+                  </AnimatePresence>
+                  <span className="relative z-10">{chip}</span>
+                </motion.button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </motion.footer>
+
+      <AnimatePresence>
+        {(hasInteracted || showChat) && showChat && (
+          <motion.div
+            initial={{ opacity: 0, y: 12, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 12, scale: 0.98 }}
+            transition={{ duration: 0.5, ease: "easeInOut" }}
+            className="fixed bottom-24 right-5 z-40 w-[min(92vw,24rem)] overflow-hidden rounded-[1.2rem] border border-white/12 bg-[#0b1323]/95 shadow-[0_20px_52px_rgba(2,8,23,0.44)] backdrop-blur-md"
+          >
+            <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+              <div>
+                <p className="text-sm font-medium text-white">Continue in chat</p>
+                <p className="text-xs text-slate-200/60">A quieter way to keep going</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowChat(false)}
+                className="rounded-full border border-white/10 bg-white/[0.05] px-3 py-1 text-xs text-slate-100/80 hover:bg-white/[0.08]"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="max-h-72 space-y-2 overflow-y-auto px-4 py-3">
+              {chat.messages.slice(-6).map((message) => (
+                <div
+                  key={message.id}
+                  className={`max-w-[88%] rounded-2xl px-3 py-2 text-sm leading-6 ${
+                    message.role === "user"
+                      ? "ml-auto bg-gradient-to-r from-cyan-300 to-sky-400 text-slate-950"
+                      : "border border-white/10 bg-white/[0.06] text-slate-100"
+                  }`}
+                >
+                  {message.content}
+                </div>
+              ))}
+              {chat.isThinking && <p className="px-1 text-xs text-slate-200/60">Thinking...</p>}
+            </div>
+
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                submitChat();
+              }}
+              className="border-t border-white/10 p-3"
+            >
+              <div className="flex gap-2">
+                <input
+                  value={chatInput}
+                  onChange={(event) => setChatInput(event.target.value)}
+                  placeholder="Type a thought..."
+                  className="h-11 min-w-0 flex-1 rounded-2xl border border-white/10 bg-white/[0.05] px-3 text-sm text-white outline-none placeholder:text-slate-400"
+                />
+                <button
+                  type="submit"
+                  className="rounded-2xl bg-white px-4 text-sm font-medium text-slate-950 transition hover:-translate-y-0.5"
+                >
+                  Send
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}

@@ -11,6 +11,7 @@ const SESSION_KEY = "lifelens_session";
 export default function App() {
   const [session, setSession] = useState(null);
   const [authOpen, setAuthOpen] = useState(false);
+  const showLandingScene = !session && !authOpen;
 
   useEffect(() => {
     try {
@@ -35,9 +36,9 @@ export default function App() {
 
   return (
     <>
-      {session && <AmbientBackground />}
-      {session && <div className="noise-layer" />}
-      {!session && <LandingPage onStartTalking={() => setAuthOpen(true)} />}
+      {showLandingScene && <AmbientBackground />}
+      {showLandingScene && <div className="noise-layer" />}
+      {showLandingScene && <LandingPage onStartTalking={() => setAuthOpen(true)} />}
       {session && (
         <Suspense fallback={<div className="min-h-screen" />}>
           <Dashboard session={session} onLogout={logout} />

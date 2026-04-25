@@ -7,7 +7,7 @@ function delay(ms) {
   });
 }
 
-async function fetchVoiceConfig(retries = 6, delayMs = 600) {
+async function fetchVoiceConfig(retries = 2, delayMs = 100) {
   let lastError = null;
 
   for (let attempt = 0; attempt < retries; attempt += 1) {
@@ -28,12 +28,118 @@ async function fetchVoiceConfig(retries = 6, delayMs = 600) {
   throw lastError || new Error("Unable to load voice configuration");
 }
 
+function normalizeTranscript(text) {
+  if (!text) {
+    return "";
+  }
+
+  return text
+    .replace(/\blife\s*line\b/gi, "LifeLens")
+    .replace(/\blifeline\b/gi, "LifeLens")
+    .replace(/\blife\s*lens\b/gi, "LifeLens")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isFinalTranscriptMessage(message) {
+  if (!message || typeof message !== "object") {
+    return false;
+  }
+
+  if (message.isFinal === false || message.final === false) {
+    return false;
+  }
+
+  return true;
+}
+
+function extractTranscriptEvent(message) {
+  if (!message || typeof message !== "object") {
+    return null;
+  }
+
+  const toText = (value) => (typeof value === "string" ? normalizeTranscript(value) : "");
+
+  const inferFinal = (obj) => {
+    if (!obj || typeof obj !== "object") {
+      return false;
+    }
+
+    const transcriptType = String(obj.transcriptType || obj.transcript_type || obj.kind || "").toLowerCase();
+    const status = String(obj.status || "").toLowerCase();
+
+    if (obj.isFinal === true || obj.final === true) {
+      return true;
+    }
+    if (obj.isFinal === false || obj.final === false) {
+      return false;
+    }
+    if (transcriptType === "final" || status === "final") {
+      return true;
+    }
+    if (transcriptType === "partial" || transcriptType === "interim") {
+      return false;
+    }
+
+    return isFinalTranscriptMessage(obj);
+  };
+
+  const directText = toText(message.transcript || message.text || message.content || message.message);
+  if (directText) {
+    return {
+      role: String(message.role || message.speaker || "assistant").toLowerCase(),
+      transcript: directText,
+      isFinal: inferFinal(message),
+    };
+  }
+
+  const nested = message.data && typeof message.data === "object" ? message.data : null;
+  const nestedText = toText(nested?.transcript || nested?.text || nested?.content || nested?.message);
+  if (nestedText) {
+    return {
+      role: String(nested?.role || nested?.speaker || message.role || "assistant").toLowerCase(),
+      transcript: nestedText,
+      isFinal: inferFinal(nested) || inferFinal(message),
+    };
+  }
+
+  const candidates = Array.isArray(message.messages)
+    ? message.messages
+    : Array.isArray(message.conversation)
+      ? message.conversation
+      : [];
+
+  if (candidates.length > 0) {
+    const last = candidates[candidates.length - 1];
+    if (last && typeof last === "object") {
+      const lastText = toText(last.transcript || last.text || last.content || last.message);
+      if (lastText) {
+        return {
+          role: String(last.role || last.speaker || "assistant").toLowerCase(),
+          transcript: lastText,
+          isFinal: inferFinal(last) || inferFinal(message),
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
 export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken = "" } = {}) {
   const vapiRef = useRef(null);
-  const browserRecognitionRef = useRef(null);
   const transcriptDebounceRef = useRef(null);
+  const interimSubmitTimerRef = useRef(null);
+  const userUiTimerRef = useRef(null);
+  const assistantUiTimerRef = useRef(null);
+  const pendingUserTranscriptRef = useRef("");
+  const pendingAssistantTranscriptRef = useRef("");
   const lastSubmittedTranscriptRef = useRef("");
-  const lastStoredVoiceMemoryRef = useRef({ text: "", ts: 0 });
+  const lastInterimSubmittedRef = useRef("");
+  const lastUserTranscriptRef = useRef("");
+  const lastAssistantTranscriptRef = useRef("");
+  const desiredConnectionRef = useRef(false);
+  const micPermissionPromiseRef = useRef(null);
 
   const [ready, setReady] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -42,11 +148,85 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
   const [userTranscript, setUserTranscript] = useState("");
   const [status, setStatus] = useState("Loading voice configuration...");
   const [error, setError] = useState("");
-  const [messages, setMessages] = useState([]);
   const [config, setConfig] = useState({ apiKey: "", assistantId: "" });
-  const [mode, setMode] = useState("vapi");
-  const [browserSupported, setBrowserSupported] = useState(false);
+  const [mode] = useState("vapi");
   const [activity, setActivity] = useState("idle");
+
+  const ensureMicrophoneAccess = useCallback(async () => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      return false;
+    }
+
+    if (!micPermissionPromiseRef.current) {
+      micPermissionPromiseRef.current = navigator.mediaDevices
+        .getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        })
+        .then((stream) => {
+          stream.getTracks().forEach((track) => track.stop());
+          return true;
+        })
+        .catch(() => false);
+    }
+
+    return micPermissionPromiseRef.current;
+  }, []);
+
+  const submitTranscript = useCallback((text) => {
+    const normalized = normalizeTranscript(text || "");
+    if (!normalized) {
+      return;
+    }
+    if (lastSubmittedTranscriptRef.current === normalized) {
+      return;
+    }
+    lastSubmittedTranscriptRef.current = normalized;
+    onFinalTranscript?.(normalized);
+  }, [onFinalTranscript]);
+
+  const scheduleUserTranscriptUpdate = useCallback((text, immediate = false) => {
+    pendingUserTranscriptRef.current = text;
+    if (immediate) {
+      if (userUiTimerRef.current) {
+        clearTimeout(userUiTimerRef.current);
+        userUiTimerRef.current = null;
+      }
+      setUserTranscript(text);
+      return;
+    }
+
+    if (userUiTimerRef.current) {
+      return;
+    }
+    userUiTimerRef.current = setTimeout(() => {
+      userUiTimerRef.current = null;
+      setUserTranscript(pendingUserTranscriptRef.current);
+    }, 90);
+  }, []);
+
+  const scheduleAssistantTranscriptUpdate = useCallback((text, immediate = false) => {
+    pendingAssistantTranscriptRef.current = text;
+    if (immediate) {
+      if (assistantUiTimerRef.current) {
+        clearTimeout(assistantUiTimerRef.current);
+        assistantUiTimerRef.current = null;
+      }
+      setAssistantTranscript(text);
+      return;
+    }
+
+    if (assistantUiTimerRef.current) {
+      return;
+    }
+    assistantUiTimerRef.current = setTimeout(() => {
+      assistantUiTimerRef.current = null;
+      setAssistantTranscript(pendingAssistantTranscriptRef.current);
+    }, 90);
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -77,94 +257,23 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
   }, []);
 
   useEffect(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    setBrowserSupported(Boolean(SpeechRecognition));
-
-    if (!SpeechRecognition) {
-      return;
-    }
-
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = false;
-    recognition.lang = "en-US";
-
-    recognition.onstart = () => {
-      setConnected(true);
-      setConnecting(false);
-      setMode("browser");
-      setActivity("listening");
-      setStatus("Connected in browser voice mode");
-      setError("");
-    };
-
-    recognition.onend = () => {
-      setConnected(false);
-      setConnecting(false);
-      setActivity("idle");
-      setStatus("Browser voice mode ended");
-    };
-
-    recognition.onerror = (event) => {
-      setError(event.error || "Browser speech mode failed");
-      setConnected(false);
-      setConnecting(false);
-      setActivity("idle");
-    };
-
-    recognition.onresult = (event) => {
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
-        const transcript = (event.results[index][0]?.transcript || "").trim();
-        if (!transcript || !event.results[index].isFinal) {
-          continue;
-        }
-
-        setUserTranscript(transcript);
-        setActivity("listening");
-        setMessages((current) => [
-          ...current,
-          {
-            role: "user",
-            transcript,
-            timestamp: Date.now()
-          }
-        ].slice(-30));
-
-        if (lastSubmittedTranscriptRef.current === transcript) {
-          continue;
-        }
-        lastSubmittedTranscriptRef.current = transcript;
-        onFinalTranscript?.(transcript);
-      }
-    };
-
-    browserRecognitionRef.current = recognition;
-
     return () => {
-      try {
-        recognition.stop();
-      } catch {
-        // Ignore teardown errors.
-      }
-      browserRecognitionRef.current = null;
-    };
-  }, [onFinalTranscript]);
-
-  useEffect(() => {
-    return () => {
+      desiredConnectionRef.current = false;
       if (transcriptDebounceRef.current) {
         clearTimeout(transcriptDebounceRef.current);
+      }
+      if (interimSubmitTimerRef.current) {
+        clearTimeout(interimSubmitTimerRef.current);
+      }
+      if (userUiTimerRef.current) {
+        clearTimeout(userUiTimerRef.current);
+      }
+      if (assistantUiTimerRef.current) {
+        clearTimeout(assistantUiTimerRef.current);
       }
       if (vapiRef.current) {
         try {
           vapiRef.current.stop();
-        } catch {
-          // Ignore cleanup errors.
-        }
-      }
-      if (browserRecognitionRef.current) {
-        try {
-          browserRecognitionRef.current.stop();
         } catch {
           // Ignore cleanup errors.
         }
@@ -187,104 +296,134 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
       setActivity("idle");
       setStatus("Voice session ended");
       setUserTranscript("");
+      setAssistantTranscript("");
+      pendingUserTranscriptRef.current = "";
+      pendingAssistantTranscriptRef.current = "";
+      lastUserTranscriptRef.current = "";
+      lastAssistantTranscriptRef.current = "";
+      lastInterimSubmittedRef.current = "";
       if (transcriptDebounceRef.current) {
         clearTimeout(transcriptDebounceRef.current);
+      }
+      if (interimSubmitTimerRef.current) {
+        clearTimeout(interimSubmitTimerRef.current);
+      }
+      if (userUiTimerRef.current) {
+        clearTimeout(userUiTimerRef.current);
+        userUiTimerRef.current = null;
+      }
+      if (assistantUiTimerRef.current) {
+        clearTimeout(assistantUiTimerRef.current);
+        assistantUiTimerRef.current = null;
       }
     });
 
     vapi.on("message", (message) => {
-      if (message?.type !== "transcript") {
+      const event = extractTranscriptEvent(message);
+      if (!event) {
         return;
       }
 
-      const role = message.role || "assistant";
-      const transcript = (message.transcript || "").trim();
-      if (!transcript) {
-        return;
-      }
-
-      setMessages((current) => [
-        ...current,
-        {
-          role,
-          transcript,
-          timestamp: Date.now()
-        }
-      ].slice(-30));
+      const role = event.role || "assistant";
+      const transcript = event.transcript;
+      const finalMessage = Boolean(event.isFinal);
 
       if (role === "user") {
-        setUserTranscript(transcript);
-        setActivity("listening");
-
-        const now = Date.now();
-        const lastStored = lastStoredVoiceMemoryRef.current;
-        const isDuplicateMemory = lastStored.text === transcript && now - lastStored.ts < 8000;
-        if (userId && !isDuplicateMemory) {
-          lastStoredVoiceMemoryRef.current = { text: transcript, ts: now };
-          fetch("/api/memory/store", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              user_id: userId,
-              content: transcript,
-              intent: "voice_conversation",
-              preferences: {},
-              metadata: {
-                source: "vapi-live-transcript",
-                session_token: sessionToken || "",
-              }
-            })
-          }).catch(() => {
-            // Non-blocking write; voice session should continue even if memory write fails.
-          });
+        if (lastUserTranscriptRef.current === transcript) {
+          return;
         }
+        lastUserTranscriptRef.current = transcript;
+        scheduleUserTranscriptUpdate(transcript, finalMessage);
+        setActivity("processing");
 
+        if (interimSubmitTimerRef.current) {
+          clearTimeout(interimSubmitTimerRef.current);
+        }
         if (transcriptDebounceRef.current) {
           clearTimeout(transcriptDebounceRef.current);
         }
-        transcriptDebounceRef.current = setTimeout(() => {
-          if (lastSubmittedTranscriptRef.current === transcript) {
-            return;
-          }
-          lastSubmittedTranscriptRef.current = transcript;
-          onFinalTranscript?.(transcript);
-        }, 900);
-      } else if (role === "assistant") {
-        setAssistantTranscript(transcript);
-        setActivity("speaking");
+
+        if (finalMessage) {
+          transcriptDebounceRef.current = setTimeout(() => {
+            submitTranscript(transcript);
+          }, 90);
+          return;
+        }
+
+        // Keep transcription lively and reduce perceived latency by submitting stable interim chunks.
+        if (transcript.length >= 20) {
+          interimSubmitTimerRef.current = setTimeout(() => {
+            const stable = lastUserTranscriptRef.current;
+            if (!stable || stable !== transcript) {
+              return;
+            }
+            if (lastInterimSubmittedRef.current === stable) {
+              return;
+            }
+            if (lastSubmittedTranscriptRef.current && stable.startsWith(lastSubmittedTranscriptRef.current)) {
+              const delta = stable.length - lastSubmittedTranscriptRef.current.length;
+              if (delta < 12) {
+                return;
+              }
+            }
+            lastInterimSubmittedRef.current = stable;
+            submitTranscript(stable);
+          }, 360);
+        }
+      } else if (role === "assistant" || role === "bot" || role === "agent") {
+        if (lastAssistantTranscriptRef.current === transcript) {
+          return;
+        }
+        lastAssistantTranscriptRef.current = transcript;
+        scheduleAssistantTranscriptUpdate(transcript, finalMessage);
+        setActivity("answering");
       }
     });
-  }, [onFinalTranscript, sessionToken, userId]);
+  }, [scheduleAssistantTranscriptUpdate, scheduleUserTranscriptUpdate, submitTranscript]);
+
+  useEffect(() => {
+    if (!ready || !config.apiKey || vapiRef.current) {
+      return;
+    }
+
+    try {
+      const instance = new Vapi(config.apiKey);
+      vapiRef.current = instance;
+      wireEvents(instance);
+    } catch {
+      // Keep lazy init fallback in connect().
+    }
+  }, [config.apiKey, ready, wireEvents]);
 
   const connect = useCallback(async () => {
     if (connecting || connected) {
       return;
     }
 
-    if (!ready && browserSupported && browserRecognitionRef.current) {
-      setConnecting(true);
-      setActivity("thinking");
-      setStatus("Starting browser voice mode...");
-      try {
-        browserRecognitionRef.current.start();
-      } catch (browserError) {
-        setConnecting(false);
-        setError(browserError?.message || "Unable to start browser voice mode");
-      }
+    desiredConnectionRef.current = true;
+    setError("");
+
+    const micReady = await ensureMicrophoneAccess();
+    if (!micReady) {
+      setConnecting(false);
+      setActivity("idle");
+      setError("Microphone access is blocked. Allow microphone permission and try again.");
       return;
     }
 
     if (!ready) {
-      setError("Voice credentials not available and browser mode unsupported.");
+      setConnecting(false);
+      setActivity("idle");
+      setStatus("Vapi voice unavailable");
+      setError("Vapi voice is not configured right now. Chat is available for Gemini text responses.");
       return;
     }
 
     try {
       setConnecting(true);
-      setActivity("thinking");
+      setActivity("processing");
       setStatus("Connecting to voice agent...");
       setError("");
-      setMode("vapi");
 
       if (!vapiRef.current) {
         vapiRef.current = new Vapi(config.apiKey);
@@ -302,32 +441,15 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
         await vapiRef.current.start(config.assistantId);
       }
     } catch (connectError) {
-      if (browserSupported && browserRecognitionRef.current) {
-        try {
-          setStatus("Vapi unavailable, switching to browser voice mode...");
-          browserRecognitionRef.current.start();
-          return;
-        } catch {
-          // Continue to hard failure below.
-        }
-      }
       setConnecting(false);
       setActivity("idle");
       setStatus("Voice session failed to start");
       setError(connectError?.message || "Unable to start Vapi call");
     }
-  }, [browserSupported, config.assistantId, config.apiKey, connected, connecting, ready, sessionToken, userId, wireEvents]);
+  }, [config.assistantId, config.apiKey, connected, connecting, ensureMicrophoneAccess, ready, sessionToken, userId, wireEvents]);
 
   const disconnect = useCallback(async () => {
-    if (mode === "browser" && browserRecognitionRef.current) {
-      try {
-        browserRecognitionRef.current.stop();
-        return;
-      } catch (disconnectError) {
-        setError(disconnectError?.message || "Unable to end browser voice mode");
-      }
-    }
-
+    desiredConnectionRef.current = false;
     if (!vapiRef.current) {
       return;
     }
@@ -359,7 +481,6 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
       activity,
       assistantTranscript,
       userTranscript,
-      messages,
       connect,
       disconnect,
       toggle
@@ -374,7 +495,6 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
       activity,
       assistantTranscript,
       userTranscript,
-      messages,
       connect,
       disconnect,
       toggle,

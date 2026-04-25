@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import sys
 import time
+import os
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -40,7 +41,7 @@ def wait_for_backend(url: str, timeout_seconds: int = 25) -> bool:
                     return True
         except (urllib.error.URLError, TimeoutError):
             pass
-        time.sleep(0.5)
+        time.sleep(0.1)
     return False
 
 
@@ -61,7 +62,10 @@ def main() -> int:
         if install_process.returncode != 0:
             return install_process.returncode
 
-    backend_command = [sys.executable, "-m", "uvicorn", "app.main:app", "--reload", "--port", "8000"]
+    reload_enabled = os.getenv("LIFELENS_RELOAD", "").strip().lower() in {"1", "true", "yes", "on"}
+    backend_command = [sys.executable, "-m", "uvicorn", "app.main:app", "--port", "8000"]
+    if reload_enabled:
+        backend_command.append("--reload")
     frontend_command = [npm_executable, "run", "dev"]
 
     print("Starting LifeLens backend on http://localhost:8000")
