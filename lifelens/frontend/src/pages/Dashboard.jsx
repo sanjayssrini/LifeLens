@@ -4,11 +4,44 @@ import { AnimatePresence, MotionConfig, motion, useReducedMotion } from "framer-
 import { useSupportChat } from "../hooks/useSupportChat";
 import { useVapiVoiceAgent } from "../hooks/useVapiVoiceAgent";
 
+import CompanionWidget from "../components/CompanionWidget";
+import BreathingOverlay from "../components/BreathingOverlay";
+import InsightCard from "../components/InsightCard";
+import CheerUpOverlay from "../components/CheerUpOverlay";
+import RacingThoughtsOverlay from "../components/RacingThoughtsOverlay";
+import GentleRoutineOverlay from "../components/GentleRoutineOverlay";
+import SOSModal from "../components/SOSModal";
+
 const suggestionChips = [
   "I'm feeling anxious right now",
   "Guide me through breathing",
   "Help me calm racing thoughts",
   "Plan a gentle routine for today",
+];
+
+const suggestionChipSupportModes = [
+  "anxious",
+  "breathing",
+  "calmingThoughts",
+  "gentleRoutine",
+];
+
+function getLanguageName(code) {
+  try {
+    return new Intl.DisplayNames(['en'], { type: 'language' }).of(code) || code;
+  } catch {
+    return code;
+  }
+}
+
+const LANGUAGE_OPTIONS = [
+  { code: 'auto', label: 'Auto (detected)' },
+  { code: 'en', label: 'English' },
+  { code: 'hi', label: 'Hindi' },
+  { code: 'es', label: 'Spanish' },
+  { code: 'fr', label: 'French' },
+  { code: 'ta', label: 'Tamil' },
+  { code: 'bn', label: 'Bengali' },
 ];
 
 function getTimeGreeting() {
@@ -81,6 +114,59 @@ function createParticles() {
     delay: index * 0.18,
     duration: 18 + index * 0.55,
   }));
+}
+
+function detectVoiceMetadata(transcript) {
+  if (!transcript) {
+    return {};
+  }
+  const text = String(transcript).trim();
+  const lower = text.toLowerCase();
+  const meta = {};
+
+  if (/(\.\.\.|-{2,}|-\s|-$|\?\.\.|!!!)/m.test(text)) {
+    meta.crack_detected = true;
+  }
+
+  const numExclamations = (text.match(/!/g) || []).length;
+  const numAllCaps = (text.match(/\b[A-Z]{2,}\b/g) || []).length;
+  if (numExclamations >= 2 || numAllCaps >= 2) {
+    meta.speed = "fast";
+  }
+
+  if (/\b(angry|anger|mad|furious|pissed|hate|damn|shit|fuck|bitch|asshole|rage|frustrated|irritated|outraged|resentful|screaming)\b/i.test(text)
+      || numExclamations >= 2
+      || numAllCaps >= 2) {
+    meta.anger = true;
+  }
+
+  return meta;
+}
+
+function detectEmotionFromText(text) {
+  if (!text) {
+    return "neutral";
+  }
+  const lower = String(text).toLowerCase();
+  if (/\b(angry|anger|mad|furious|pissed|hate|damn|shit|fuck|bitch|asshole|rage|frustrated|irritated|outraged|resentful|screaming)\b/.test(lower)) {
+    return "angry";
+  }
+  if (/\b(panic|panicking|anxious|anxiety|worried|nervous|overwhelmed|scared|fearful|tense|stressed)\b/.test(lower)) {
+    return "anxious";
+  }
+  if (/\b(sad|depressed|broken|hopeless|down|tearful|lonely|hurt|grief|heartbroken)\b/.test(lower)) {
+    return "sad";
+  }
+  return "neutral";
+}
+
+function detectDanger(text) {
+  if (!text) {
+    return false;
+  }
+  const lower = String(text).toLowerCase();
+  // Detect critical danger keywords and phrases
+  return /\b(danger|emergency|danger|help|sos|hurt|injury|injured|bleeding|stabbed|shot|attacked|assault|rape|dying|dead|suicide|kill|myself|poison|overdose|crash|accident|fire|threat|threatened|abusive|abuse|violent|violence|someone is|i'm being|being attacked|being hurt|someone hurt|call police|call ambulance|911|police|hospital|urgent)\b/.test(lower);
 }
 
 function formatClock(ts) {
@@ -185,6 +271,45 @@ const DashboardBackground = memo(function DashboardBackground({ reduceMotion, pa
   );
 });
 
+const humanizeEmotion = (emotion) => {
+  const mapping = {
+    sad: "You seem a bit low",
+    anxious: "I'm sensing some tension",
+    overwhelmed: "This feels heavy right now",
+    frustrated: "I sense some frustration",
+    tired: "You seem exhausted",
+    lonely: "You might be feeling isolated",
+    stressed: "I'm sensing some stress",
+    angry: "I hear the frustration",
+    happy: "You sound bright today",
+    calm: "You seem grounded",
+  };
+  return mapping[emotion?.toLowerCase()] || `Sensing some ${emotion} feelings`;
+};
+
+const isNegativeEmotion = (emotion) => {
+  return ["sad", "anxious", "overwhelmed", "lonely", "stressed", "angry", "tired", "frustrated"].includes(
+    String(emotion || "").toLowerCase(),
+  );
+};
+
+const strategyBadgeClass = (strategy) => {
+  switch (String(strategy || "").toLowerCase()) {
+    case "energy":
+      return "border-orange-300/25 bg-orange-400/10 text-orange-100";
+    case "calm":
+      return "border-sky-300/25 bg-sky-400/10 text-sky-100";
+    case "rational":
+      return "border-emerald-300/25 bg-emerald-400/10 text-emerald-100";
+    case "companion":
+      return "border-violet-300/25 bg-violet-400/10 text-violet-100";
+    case "visual":
+      return "border-cyan-300/25 bg-cyan-400/10 text-cyan-100";
+    default:
+      return "border-slate-200/20 bg-white/5 text-slate-100";
+  }
+};
+
 const ChatMessagesList = memo(function ChatMessagesList({ messages, isThinking, thinkingText, onFeedback, session }) {
   return (
     <div className="max-h-72 space-y-2 overflow-y-auto px-4 py-3">
@@ -197,6 +322,33 @@ const ChatMessagesList = memo(function ChatMessagesList({ messages, isThinking, 
                 : "border border-white/10 bg-white/[0.06] text-slate-100"
             }`}
           >
+            {message.role === "assistant" && message.meta?.language && message.meta.language !== "en" && (
+              <motion.div
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mb-2 w-fit rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2.5 py-0.5 text-[10px] uppercase tracking-wider text-cyan-200/70"
+              >
+                Detected: {String(message.meta.language).toUpperCase()}
+              </motion.div>
+            )}
+            {message.role === "assistant" && message.meta?.strategy && (
+              <motion.div
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mb-2 w-fit rounded-full border border-slate-200/20 bg-slate-700/20 px-2.5 py-0.5 text-[10px] text-slate-100/80"
+              >
+                Strategy: {String(message.meta.strategy).toLowerCase()}
+              </motion.div>
+            )}
+            {message.role === "assistant" && message.meta?.intensity > 0.5 && message.meta?.emotion && (
+              <motion.div
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mb-2 w-fit rounded-full border border-indigo-200/20 bg-indigo-500/10 px-2.5 py-0.5 text-[10px] text-indigo-200/80"
+              >
+                {humanizeEmotion(message.meta.emotion)}
+              </motion.div>
+            )}
             {message.content}
             {message.role === "assistant" && message.id !== "welcome" && (
               <AnimatePresence>
@@ -366,10 +518,12 @@ const ChatDrawer = memo(function ChatDrawer({
   resetToken,
   onClose,
   onDraftConsumed,
+  onSupportAction,
+  chat,
 }) {
-  const chat = useSupportChat();
   const { resetChat, messages, isThinking, sendFeedback, sendMessage } = chat;
   const chatScrollRef = useRef(null);
+  const processedMessageIdsRef = useRef(new Set());
 
   useEffect(() => {
     resetChat();
@@ -382,15 +536,39 @@ const ChatDrawer = memo(function ChatDrawer({
     chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
   }, [messages, isThinking, visible]);
 
+  useEffect(() => {
+    if (!messages || messages.length === 0) return;
+    
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage.role === "assistant" && lastMessage.meta) {
+      if (processedMessageIdsRef.current.has(lastMessage.id)) return;
+      
+      const { intensity, extra_action, strategy } = lastMessage.meta;
+      
+      if (intensity > 0.6 && extra_action) {
+        onSupportAction?.({ extra_action, strategy });
+      }
+      
+      processedMessageIdsRef.current.add(lastMessage.id);
+    }
+  }, [messages, onSupportAction]);
+
   const submitChat = useCallback(
     (text, options = {}) => {
+      // Check for danger keywords - if detected, trigger SOS immediately
+      if (detectDanger(text)) {
+        setShowSOSModal(true);
+        return;
+      }
+      
       sendMessage(text, "text", {
         userId: options.userId || session?.user?.user_id,
         sessionToken: options.sessionToken || session?.session_token,
         demoMode: false,
+        voiceMetadata: detectVoiceMetadata(text),
       });
     },
-    [sendMessage, session?.session_token, session?.user?.user_id],
+    [detectVoiceMetadata, sendMessage, session?.session_token, session?.user?.user_id],
   );
 
   if (!visible) {
@@ -417,6 +595,10 @@ const ChatDrawer = memo(function ChatDrawer({
         >
           Close
         </button>
+      </div>
+
+      <div className="mt-4">
+        <InsightCard session={session} />
       </div>
 
       <div ref={chatScrollRef}>
@@ -455,11 +637,54 @@ export default function Dashboard({ session, onLogout }) {
   const [continuityVisible, setContinuityVisible] = useState(false);
   const [thinkingLabelIndex, setThinkingLabelIndex] = useState(0);
   const [voiceFeedback, setVoiceFeedback] = useState({ responseId: "", status: "idle", hidden: false });
+  
+  // Layer 3 Support States
+  const [supportMode, setSupportMode] = useState(null);
+  const [showSupportPopup, setShowSupportPopup] = useState(false);
+  const [supportStrategy, setSupportStrategy] = useState("companion");
+  const [isVisualBoost, setIsVisualBoost] = useState(false);
+  const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
+  const [languageSelection, setLanguageSelection] = useState({ mode: "detected", value: "en" });
+  const [showSOSModal, setShowSOSModal] = useState(false);
+  const languageMenuRef = useRef(null);
+  const voiceTranscriptSentRef = useRef("");
+
+  const chat = useSupportChat();
+  const { resetChat, messages, isThinking, sendFeedback, sendMessage } = chat;
+
   const settingsMenuRef = useRef(null);
   const chipTimeoutRef = useRef(null);
   const particles = useMemo(() => createParticles(), []);
 
+  const submitVoiceTranscript = useCallback(
+    (transcript) => {
+      if (!transcript || String(transcript).trim().length === 0) {
+        return;
+      }
+      const normalized = String(transcript).trim();
+      if (voiceTranscriptSentRef.current === normalized) {
+        return;
+      }
+      voiceTranscriptSentRef.current = normalized;
+      
+      // Check for danger keywords - if detected, trigger SOS immediately
+      if (detectDanger(normalized)) {
+        setShowSOSModal(true);
+        return;
+      }
+      
+      setShowChat(true);
+      sendMessage(normalized, "voice", {
+        userId: session?.user?.user_id || "",
+        sessionToken: session?.session_token || "",
+        voiceMetadata: detectVoiceMetadata(normalized),
+      });
+    },
+    [detectVoiceMetadata, sendMessage, session?.session_token, session?.user?.user_id],
+  );
+
   const voice = useVapiVoiceAgent({
+    onFinalTranscript: submitVoiceTranscript,
     userId: session?.user?.user_id || "",
     sessionToken: session?.session_token || "",
   });
@@ -481,10 +706,87 @@ export default function Dashboard({ session, onLogout }) {
   const isListening = voice.activity === "listening";
   const isConnecting = voice.connecting;
   const isReasoning = voice.activity === "processing";
-  const isThinking = isConnecting || isReasoning;
+  const isVoiceThinking = isConnecting || isReasoning;
   const isSpeaking = voice.activity === "answering";
   const reduceMotion = Boolean(prefersReducedMotion || forceReducedMotion);
-  const orbActive = isListening || isThinking || isSpeaking;
+  const orbActive = isListening || isVoiceThinking || isSpeaking;
+
+  const assistantMeta = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message.role === "assistant" && message.meta) {
+        return message.meta;
+      }
+    }
+    return {};
+  }, [messages]);
+
+  const assistantEmotion = String(assistantMeta?.emotion || "neutral").toLowerCase();
+  const assistantStrategy = String(assistantMeta?.strategy || "companion").toLowerCase();
+  const assistantLanguage = String(assistantMeta?.language || "en").toLowerCase();
+  const assistantIntensity = Number(assistantMeta?.intensity || 0);
+  const selectedLanguageCode =
+    languageSelection.mode === "detected" ? assistantLanguage : languageSelection.value;
+  const selectedLanguageOptionCode = languageSelection.mode === "detected" ? "auto" : languageSelection.value;
+
+  useEffect(() => {
+    if (languageSelection.mode === "detected" && assistantLanguage) {
+      setLanguageSelection((current) => ({ ...current, value: assistantLanguage }));
+    }
+  }, [assistantLanguage, languageSelection.mode]);
+
+  useEffect(() => {
+    if (!languageMenuOpen) {
+      return undefined;
+    }
+
+    const handleClickOutside = (event) => {
+      if (!languageMenuRef.current?.contains(event.target)) {
+        setLanguageMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [languageMenuOpen]);
+
+  const selectLanguage = useCallback((code) => {
+    if (!code) {
+      return;
+    }
+
+    if (code === "auto") {
+      setLanguageSelection({ mode: "detected", value: assistantLanguage });
+    } else {
+      setLanguageSelection({ mode: "manual", value: code });
+    }
+    setLanguageMenuOpen(false);
+  }, [assistantLanguage]);
+
+  const latestUserMessage = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i].role === "user") {
+        return String(messages[i].content || "");
+      }
+    }
+    return "";
+  }, [messages]);
+
+  const userEmotion = detectEmotionFromText(voice.userTranscript || latestUserMessage || "");
+  const currentMood = userEmotion !== "neutral" ? userEmotion : assistantEmotion;
+
+  const shouldPromptSupport = !supportMode && !showSupportPopup && (
+    assistantMeta?.extra_action ||
+    (assistantIntensity > 0.65 && isNegativeEmotion(currentMood))
+  );
+
+  useEffect(() => {
+    if (!shouldPromptSupport) {
+      return;
+    }
+    setSupportStrategy(assistantStrategy || "companion");
+    setShowSupportPopup(true);
+  }, [shouldPromptSupport, assistantStrategy]);
 
   useEffect(() => {
     if (typeof navigator === "undefined") {
@@ -509,11 +811,11 @@ export default function Dashboard({ session, onLogout }) {
     if (isSpeaking) {
       return "Answering";
     }
-    if (isThinking) {
+    if (isVoiceThinking) {
       return "Understanding";
     }
     return "Tap to speak";
-  }, [isConnecting, isListening, isSpeaking, isThinking]);
+  }, [isConnecting, isListening, isSpeaking, isVoiceThinking]);
 
   const thinkingText = isReasoning ? thinkingLabels[thinkingLabelIndex % thinkingLabels.length] : "Thinking...";
 
@@ -551,6 +853,23 @@ export default function Dashboard({ session, onLogout }) {
       }
     };
   }, []);
+
+  const handleSupportAction = useCallback(({ extra_action, strategy }) => {
+    setSupportStrategy(strategy || "companion");
+
+    if (extra_action === "visual_boost") {
+      setIsVisualBoost(true);
+      setTimeout(() => setIsVisualBoost(false), 2000);
+      return;
+    }
+
+    if (extra_action === "companion" || extra_action === "breathing") {
+      if (!supportMode) {
+        setShowSupportPopup(true);
+      }
+      return;
+    }
+  }, [supportMode]);
 
   useEffect(() => {
     setProfileUser(session?.user || {});
@@ -773,13 +1092,11 @@ export default function Dashboard({ session, onLogout }) {
   const triggerSuggestion = useCallback(
     (index) => {
       setHasInteracted(true);
+      setShowChat(true);
       setActiveChipIndex(index);
+      setSupportMode(suggestionChipSupportModes[index] || null);
       const rippleId = Date.now() + Math.random();
       setRipples([rippleId]);
-
-      if (!voice.connected && !voice.connecting) {
-        voice.toggle();
-      }
 
       if (chipTimeoutRef.current) {
         window.clearTimeout(chipTimeoutRef.current);
@@ -787,13 +1104,29 @@ export default function Dashboard({ session, onLogout }) {
       chipTimeoutRef.current = window.setTimeout(() => {
         setActiveChipIndex(-1);
       }, 180);
+
+      const suggestionText = suggestionChips[index];
+      // Check for danger keywords - if detected, trigger SOS immediately
+      if (detectDanger(suggestionText)) {
+        setShowSOSModal(true);
+        return;
+      }
+
+      sendMessage(suggestionText, "text", {
+        userId: session?.user?.user_id,
+        sessionToken: session?.session_token,
+      });
     },
-    [voice],
+    [sendMessage, session?.session_token, session?.user?.user_id],
   );
 
   return (
     <MotionConfig reducedMotion={reduceMotion ? "always" : "never"}>
-      <div className="relative min-h-screen overflow-hidden px-5 py-5 text-white sm:px-8">
+      <div 
+        className={`relative min-h-screen overflow-hidden px-5 py-5 text-white sm:px-8 transition-all duration-1000 ${
+          isVisualBoost ? "shadow-[inset_0_0_80px_rgba(165,180,252,0.3)] bg-indigo-900/10" : "bg-[#0b1323]"
+        }`}
+      >
       <DashboardBackground reduceMotion={reduceMotion} particles={particles} />
 
       <motion.header
@@ -818,6 +1151,15 @@ export default function Dashboard({ session, onLogout }) {
           >
             ⚙️
           </button>
+          <motion.button
+            type="button"
+            onClick={() => setShowSOSModal(true)}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            className="rounded-full border-2 border-rose-400/50 bg-rose-500/20 px-3.5 py-1.5 text-sm font-bold text-rose-100 transition hover:-translate-y-0.5 hover:bg-rose-500/30 shadow-[0_0_15px_rgba(220,38,38,0.3)]"
+          >
+            🆘 SOS
+          </motion.button>
           <button
             type="button"
             onClick={onLogout}
@@ -1199,6 +1541,61 @@ export default function Dashboard({ session, onLogout }) {
             </div>
           </motion.button>
 
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.05, ease: "easeInOut" }}
+            className="mt-5 flex flex-wrap items-center justify-center gap-3"
+          >
+            <span className={`rounded-full border px-3 py-1 text-[11px] ${strategyBadgeClass(assistantStrategy)}`}>
+              Strategy: {assistantStrategy}
+            </span>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setLanguageMenuOpen((current) => !current)}
+                className="rounded-full border border-white/12 bg-white/5 px-3 py-1 text-[11px] text-slate-100 transition hover:bg-white/10"
+              >
+                Language: {languageSelection.mode === "detected"
+                  ? `Auto (${getLanguageName(assistantLanguage)})`
+                  : getLanguageName(selectedLanguageCode)}
+              </button>
+              {languageMenuOpen && (
+                <div
+                  ref={languageMenuRef}
+                  className="absolute left-0 z-50 mt-2 w-[13rem] rounded-[1rem] border border-white/10 bg-slate-950/95 p-2 shadow-[0_18px_52px_rgba(0,0,0,0.35)]"
+                >
+                  {LANGUAGE_OPTIONS.map((option) => (
+                    <button
+                      key={option.code}
+                      type="button"
+                      onClick={() => selectLanguage(option.code)}
+                      className={`block w-full rounded-xl px-3 py-2 text-left text-sm transition ${
+                        selectedLanguageOptionCode === option.code ? "bg-cyan-500/15 text-cyan-100" : "text-slate-200 hover:bg-white/5"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <span
+              className={`rounded-full border px-3 py-1 text-[11px] ${isNegativeEmotion(currentMood)
+                ? "border-rose-300/25 bg-rose-400/10 text-rose-100"
+                : "border-emerald-300/25 bg-emerald-400/10 text-emerald-100"}`}
+            >
+              Mood: {currentMood === "neutral" ? "Steady" : currentMood}
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowSupportPopup(true)}
+              className="rounded-full border border-cyan-200/20 bg-cyan-500/10 px-3 py-1 text-[11px] text-cyan-100 transition hover:bg-cyan-500/20"
+            >
+              Need support?
+            </button>
+          </motion.div>
+
           <div className="mt-8 grid w-full max-w-[600px] gap-3 sm:grid-cols-2">
             <motion.div
               initial={{ opacity: 0, y: 8 }}
@@ -1364,6 +1761,131 @@ export default function Dashboard({ session, onLogout }) {
               resetToken={chatResetToken}
               onClose={() => setShowChat(false)}
               onDraftConsumed={() => setChatDraftSeed("")}
+              onSupportAction={handleSupportAction}
+              chat={chat}
+            />
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {showSupportPopup && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 w-[90%] max-w-sm rounded-2xl border border-indigo-200/20 bg-indigo-900/40 p-4 shadow-2xl backdrop-blur-xl"
+            >
+              <p className="text-center text-sm text-indigo-50 font-medium mb-3">
+                Do you want a little support right now?
+              </p>
+              <div className="flex flex-col gap-2">
+                {[
+                  {
+                    id: "companion",
+                    label: "Sit with me",
+                    action: () => {
+                      localStorage.setItem("lifelens_support_pref", "companion");
+                      setSupportMode("companion");
+                      setShowSupportPopup(false);
+                    }
+                  },
+                  {
+                    id: "breathing",
+                    label: "Try something calming",
+                    action: () => {
+                      localStorage.setItem("lifelens_support_pref", "breathing");
+                      setSupportMode("breathing");
+                      setShowSupportPopup(false);
+                    }
+                  }
+                ]
+                .sort((a, b) => {
+                  const pref = localStorage.getItem("lifelens_support_pref");
+                  if (pref === a.id) return -1;
+                  if (pref === b.id) return 1;
+                  return 0;
+                })
+                .map((btn) => (
+                  <button
+                    key={btn.id}
+                    onClick={btn.action}
+                    className="w-full rounded-lg bg-indigo-500/20 py-2 text-sm text-indigo-100 transition hover:bg-indigo-500/40"
+                  >
+                    {btn.label}
+                  </button>
+                ))}
+                <button
+                  onClick={() => setShowSupportPopup(false)}
+                  className="w-full rounded-lg py-1.5 text-xs text-indigo-200/60 transition hover:bg-white/5"
+                >
+                  No thanks
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {supportMode === "companion" && (
+          <CompanionWidget
+            strategy={supportStrategy}
+            onClose={() => setSupportMode(null)}
+          />
+        )}
+
+        {supportMode === "anxious" && (
+          <CheerUpOverlay
+            onClose={() => setSupportMode(null)}
+            onOpenChat={() => {
+              setShowChat(true);
+              setSupportMode(null);
+            }}
+          />
+        )}
+
+        {supportMode === "calmingThoughts" && (
+          <RacingThoughtsOverlay
+            onClose={() => setSupportMode(null)}
+            onOpenChat={() => {
+              setShowChat(true);
+              setSupportMode(null);
+            }}
+          />
+        )}
+
+        {supportMode === "gentleRoutine" && (
+          <GentleRoutineOverlay
+            onClose={() => setSupportMode(null)}
+            onOpenChat={() => {
+              setShowChat(true);
+              setSupportMode(null);
+            }}
+          />
+        )}
+
+        {supportMode === "breathing" && (
+          <BreathingOverlay
+            onClose={() => setSupportMode(null)}
+            onVoicePause={() => {
+               // Only pause if active
+               if (voice.activity !== "idle") {
+                  try {
+                    voice.stop();
+                  } catch (e) {}
+               }
+            }}
+          />
+        )}
+
+        <AnimatePresence>
+          {showSOSModal && (
+            <SOSModal
+              userId={session?.user?.user_id}
+              sessionToken={session?.session_token}
+              onClose={() => setShowSOSModal(false)}
+              onSOSTriggered={(data) => {
+                // Toast notification - SOS sent successfully
+                console.log("SOS alert sent successfully", data);
+              }}
             />
           )}
         </AnimatePresence>

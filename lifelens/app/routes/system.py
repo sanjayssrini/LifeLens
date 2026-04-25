@@ -16,6 +16,7 @@ class ChatRequest(BaseModel):
     session_token: str = ""
     source: str = "chat-ui"
     demo_mode: bool = False
+    voice_metadata: dict = {}  # Optional voice indicators like {"crack_detected": bool, "speed": "fast|normal|slow"}
 
 
 class SignupRequest(BaseModel):
@@ -62,6 +63,30 @@ class FeedbackRequest(BaseModel):
     response_id: str
     feedback: str
     metadata: dict = {}
+
+
+class InsightsRequest(BaseModel):
+    user_id: str = ""
+    session_token: str = ""
+    limit: int = 20
+
+
+class SOSTrustedContactsRequest(BaseModel):
+    user_id: str = ""
+    session_token: str = ""
+
+
+class SOSAlertRequest(BaseModel):
+    user_id: str = ""
+    session_token: str = ""
+    contact_ids: list[str] = []
+
+
+class SOSAddContactRequest(BaseModel):
+    user_id: str = ""
+    session_token: str = ""
+    name: str
+    contact: str
 
 
 def _resolve_user_id(payload: ContinuityRequest | FeedbackRequest, request: Request) -> str:
@@ -144,6 +169,7 @@ def demo_run(payload: DemoRequest, request: Request) -> dict:
 
 @router.post("/chat")
 def chat(payload: ChatRequest, request: Request) -> dict:
+    voice_meta = payload.voice_metadata or {}
     resolved_user = payload.user_id.strip()
     if not resolved_user and payload.session_token:
         session_service = request.app.state.session_service
@@ -157,6 +183,7 @@ def chat(payload: ChatRequest, request: Request) -> dict:
         message=payload.message,
         source=payload.source,
         demo_mode=payload.demo_mode,
+        voice_metadata=voice_meta
     )
 
 
@@ -328,3 +355,216 @@ def feedback(payload: FeedbackRequest, request: Request) -> dict:
         metadata=payload.metadata,
     )
     return {"status": "ok", "feedback": stored}
+
+
+@router.post("/insights")
+def get_insights(payload: InsightsRequest, request: Request) -> dict:
+    resolved_user = _resolve_user_id(payload, request)
+    if not resolved_user:
+        return {"status": "error", "detail": "Missing user identity."}
+
+    memory_service = request.app.state.memory_service
+    try:
+        recent_memory = memory_service.recent_user_memory(resolved_user, limit=payload.limit)
+    except Exception:
+        recent_memory = []
+
+    interactions = [
+        item for item in recent_memory
+        if isinstance(item, dict) and item.get("entry_type") == "interaction" and item.get("metadata")
+    ]
+
+    if not interactions:
+        return {"status": "ok", "insights": None}
+
+    # Sort interactions chronologically (oldest first)
+    interactions.sort(key=lambda item: str(item.get("timestamp") or ""))
+
+    emotions = []
+    strategies = []
+    intensities = []
+
+    for item in interactions:
+        meta = item.get("metadata", {})
+        emotion = meta.get("emotion")
+        if emotion:
+            emotions.append(emotion.lower())
+        
+        strategy = meta.get("strategy_used")
+        if strategy:
+            strategies.append(strategy.lower())
+            
+        intensity = meta.get("intensity")
+        if intensity is not None:
+            try:
+                intensities.append(float(intensity))
+            except ValueError:
+                pass
+
+    if not emotions:
+        return {"status": "ok", "insights": None}
+
+    # Compute dominant emotion
+    from collections import Counter
+    dominant_emotion = Counter(emotions).most_common(1)[0][0]
+    
+    # Compute support style
+    support_style = Counter(strategies).most_common(1)[0][0] if strategies else "companion"
+
+    # Compute trend
+    trend = "stable"
+    if len(intensities) >= 4:
+        midpoint = len(intensities) // 2
+        past_avg = sum(intensities[:midpoint]) / len(intensities[:midpoint])
+        recent_avg = sum(intensities[midpoint:]) / len(intensities[midpoint:])
+        
+        if recent_avg < past_avg - 0.1:
+            trend = "improving"
+        elif recent_avg > past_avg + 0.1:
+            trend = "declining"
+
+    # Generate summary & feedback
+    light_feedback = ""
+    summary = ""
+
+    if trend == "improving":
+        summary = "You're handling things better than before."
+        light_feedback = "You've been showing a lot of resilience lately."
+    elif trend == "declining":
+        summary = f"You've been feeling a bit more {dominant_emotion} than usual lately."
+        light_feedback = "Things seem a bit heavier recently. I'm here for you."
+    else:
+        summary = f"You've been navigating some {dominant_emotion} moments."
+        light_feedback = "You're trying, even when it's hard."
+
+    return {
+        "status": "ok",
+        "insights": {
+            "dominant_emotion": dominant_emotion,
+            "trend": trend,
+            "support_style": support_style,
+            "summary": summary,
+            "light_feedback": light_feedback
+        }
+    }
+
+
+@router.post("/sos/trusted-contacts")
+async def get_sos_trusted_contacts(payload: SOSTrustedContactsRequest, request: Request):
+    """Retrieve trusted contacts for SOS alerts."""
+    user_id = _resolve_user_id(payload, request)
+    if not user_id:
+        return {"status": "error", "message": "User not found", "trusted_contacts": []}
+
+    user_service = request.app.state.user_service
+    try:
+        user = user_service.find_by_user_id(user_id)
+        if not user:
+            return {"status": "error", "message": "User not found", "trusted_contacts": []}
+
+        trusted_contacts = user.get("trusted_contacts", [])
+        if not isinstance(trusted_contacts, list):
+            trusted_contacts = []
+
+        return {
+            "status": "ok",
+            "trusted_contacts": trusted_contacts,
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e), "trusted_contacts": []}
+
+
+@router.post("/sos/alert")
+async def send_sos_alert(payload: SOSAlertRequest, request: Request):
+    """Send SOS alert to trusted contacts."""
+    user_id = _resolve_user_id(payload, request)
+    if not user_id:
+        return {"status": "error", "message": "User not found"}
+
+    user_service = request.app.state.user_service
+    try:
+        user = user_service.find_by_user_id(user_id)
+        if not user:
+            return {"status": "error", "message": "User not found"}
+
+        trusted_contacts = user.get("trusted_contacts", [])
+        if not isinstance(trusted_contacts, list):
+            trusted_contacts = []
+
+        # Filter selected contacts
+        selected_contacts = [
+            c for c in trusted_contacts
+            if c.get("id") in (payload.contact_ids or [])
+        ]
+
+        # In a production system, you would send SMS/Email/Push notifications here
+        # For now, we'll log the alert
+        alert_data = {
+            "user_id": user_id,
+            "user_name": user.get("name", "Unknown"),
+            "user_contact": user.get("phone_or_email", "Unknown"),
+            "alert_timestamp": str(__import__("datetime").datetime.utcnow()),
+            "notified_contacts": selected_contacts,
+        }
+
+        print(f"SOS ALERT: {alert_data}")
+
+        return {
+            "status": "ok",
+            "message": f"SOS alert sent to {len(selected_contacts)} contact(s)",
+            "alert_id": __import__("uuid").uuid4().hex,
+            "contacts_notified": len(selected_contacts),
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@router.post("/sos/add-contact")
+async def add_sos_contact(payload: SOSAddContactRequest, request: Request):
+    """Add a trusted contact for SOS alerts."""
+    user_id = _resolve_user_id(payload, request)
+    if not user_id:
+        return {"status": "error", "message": "User not found"}
+
+    if not payload.name or not payload.contact:
+        return {"status": "error", "message": "Name and contact are required"}
+
+    user_service = request.app.state.user_service
+    try:
+        user = user_service.find_by_user_id(user_id)
+        if not user:
+            return {"status": "error", "message": "User not found"}
+
+        trusted_contacts = user.get("trusted_contacts", [])
+        if not isinstance(trusted_contacts, list):
+            trusted_contacts = []
+
+        # Add new contact
+        new_contact = {
+            "id": __import__("uuid").uuid4().hex,
+            "name": payload.name.strip(),
+            "contact": payload.contact.strip(),
+        }
+
+        trusted_contacts.append(new_contact)
+
+        # Update user in database
+        user["trusted_contacts"] = trusted_contacts
+        user_service.client.upsert(
+            collection_name=user_service.collection_name,
+            points=[
+                __import__("qdrant_client.models", fromlist=["PointStruct"]).PointStruct(
+                    id=user_id,
+                    vector=user.get("embedding", []),
+                    payload=user,
+                )
+            ],
+        )
+
+        return {
+            "status": "ok",
+            "message": "Contact added successfully",
+            "contact": new_contact,
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
