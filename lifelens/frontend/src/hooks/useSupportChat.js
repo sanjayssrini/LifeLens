@@ -67,7 +67,8 @@ export function useSupportChat({ onAssistantReply } = {}) {
           user_id: next.userId || "",
           session_token: next.sessionToken || "",
           source: next.source,
-          demo_mode: Boolean(next.demoMode)
+          demo_mode: Boolean(next.demoMode),
+          voice_metadata: next.voiceMetadata || {}
         })
       });
 
@@ -83,6 +84,7 @@ export function useSupportChat({ onAssistantReply } = {}) {
       }
 
       const data = await response.json();
+      console.log("FULL RESPONSE:", data);
       setLastModel(String(data.model_used || ""));
       setMemoryUsed(Boolean(data.memory_used));
       setLastLatencyMs(Number(data.processing_ms || 0));
@@ -99,7 +101,12 @@ export function useSupportChat({ onAssistantReply } = {}) {
           source: "lifelens",
           responseId,
           urgency: data.intent?.urgency || "medium",
-          latencyMs: Number(data.processing_ms || 0)
+          latencyMs: Number(data.processing_ms || 0),
+          language: data.language || "en",
+          emotion: data.emotion || "neutral",
+          intensity: Number(data.intensity || 0),
+          strategy: data.strategy || "calm",
+          extra_action: data.extra_action ?? null,
         }
       });
       onAssistantReply?.(assistantText);
@@ -159,7 +166,8 @@ export function useSupportChat({ onAssistantReply } = {}) {
       source,
       userId: options.userId || "",
       sessionToken: options.sessionToken || "",
-      demoMode: Boolean(options.demoMode)
+      demoMode: Boolean(options.demoMode),
+      voiceMetadata: options.voiceMetadata || {}
     });
     processNext();
   }, [appendMessage, processNext]);

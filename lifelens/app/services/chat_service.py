@@ -8,6 +8,9 @@ from typing import Any, Dict, List, Tuple
 
 import google.generativeai as genai
 
+from app.services.emotion_service import EmotionService
+from app.services.cheerup_service import CheerupService
+from app.services.language_service import LanguageService
 from app.services.life_insight_service import LifeInsightService
 from app.services.memory_service import MemoryService
 from app.services.schemas import IntentAnalysis, LifeInsight
@@ -15,10 +18,13 @@ from app.services.settings import Settings
 
 
 class ChatService:
-    def __init__(self, settings: Settings, memory_service: MemoryService, insight_service: LifeInsightService) -> None:
+    def __init__(self, settings: Settings, memory_service: MemoryService, insight_service: LifeInsightService, language_service: LanguageService | None = None, emotion_service: EmotionService | None = None, cheerup_service: CheerupService | None = None) -> None:
         self.settings = settings
         self.memory_service = memory_service
         self.insight_service = insight_service
+        self.language_service = language_service
+        self.emotion_service = emotion_service
+        self.cheerup_service = cheerup_service
         self.enabled = bool(settings.gemini_api_key)
         self.model_names = [
             "gemini-2.5-flash-lite",
@@ -236,7 +242,7 @@ class ChatService:
         lowered = message.lower().strip()
         return lowered.endswith("?") or lowered.startswith(("what ", "who ", "how ", "why ", "when ", "where ", "explain", "tell me", "give me"))
 
-    def _compose_prompt(self, message: str, memory_lines: List[str], intent: IntentAnalysis, demo_mode: bool) -> str:
+    def _compose_prompt(self, message: str, memory_lines: List[str], intent: IntentAnalysis, demo_mode: bool, strategy_directives: str = "") -> str:
         memory_context = " | ".join(memory_lines) if memory_lines else "none"
         style_line = (
             "Use richer tone and more expressive confidence for demo impact."
@@ -250,6 +256,7 @@ class ChatService:
             "If the user asks a factual question, answer it directly first, then offer to expand if needed. "
             "If the user is asking for support, give a warm response plus concrete next steps. "
             f" {style_line}"
+            f"\n{strategy_directives}"
             f"\nUser message: {message}"
             f"\nIntent: {intent.primary_intent}"
             f"\nDerived intents: {', '.join(intent.derived_intents) if intent.derived_intents else 'none'}"
@@ -272,26 +279,66 @@ class ChatService:
             steps[0] = f"You recently shared {memory_lines[0][:100]}, so I am keeping that in view."
         return " ".join(steps)
 
-    def respond(self, user_id: str, message: str, source: str, demo_mode: bool = False) -> Dict[str, Any]:
+    def respond(self, user_id: str, message: str, source: str, demo_mode: bool = False, voice_metadata: Dict[str, Any] | None = None) -> Dict[str, Any]:
         started = perf_counter()
         response_id = str(uuid.uuid4())
-        memory_hits, memory_lines = self._load_memory_context(user_id=user_id, message=message)
-        intent = self._infer_intent(message)
+        
+        # Multilingual Support
+        lang = "en"
+        processed_text = message
+        if self.language_service:
+            result = self.language_service.detect_and_translate(message, user_id=user_id)
+            lang = result.get("language", "en")
+            processed_text = result.get("translation", message)
+
+        memory_hits, memory_lines = self._load_memory_context(user_id=user_id, message=processed_text)
+        intent = self._infer_intent(processed_text)
+        
+        emotion_data = {"primary_emotion": "neutral", "intensity": 0.3}
+        if self.emotion_service:
+            emotion_data = self.emotion_service.analyze_emotion(processed_text, voice_metadata=voice_metadata or {})
+            
+        strategy_data = {
+            "strategy": "calm",
+            "tone": "soft and supportive",
+            "style": "simple and human",
+            "extra_action": None
+        }
+        if self.cheerup_service:
+            strategy_data = self.cheerup_service.generate_strategy(
+                emotion=emotion_data["primary_emotion"],
+                intensity=emotion_data["intensity"],
+                user_memory={}, # Pass empty dict for now, or extract traits if available
+                message=processed_text
+            )
+
+        strategy_directives = ""
+        if self.cheerup_service:
+            strategy_directives = self.cheerup_service.build_response_directives(
+                strategy_data=strategy_data,
+                intensity=emotion_data["intensity"]
+            )
 
         prompt = self._compose_prompt(
-            message=message,
+            message=processed_text,
             memory_lines=memory_lines,
             intent=intent,
             demo_mode=bool(demo_mode or self.settings.demo_mode),
+            strategy_directives=strategy_directives
         )
         reply, model_used = self._generate(prompt)
         if len(reply.strip()) < 20:
-            reply = self._reply_fallback(message=message, intent=intent, memory_lines=memory_lines)
+            reply = self._reply_fallback(message=processed_text, intent=intent, memory_lines=memory_lines)
             model_used = "fallback-repair"
 
+        # Translate reply back if needed
+        final_reply = reply
+        if self.language_service and lang != "en":
+            final_reply = self.language_service.translate_from_english(reply, lang)
+
         insight = self.insight_service.generate(
-            message=message,
-            reply=reply,
+            message=processed_text,
+            reply=final_reply,
             memory_lines=memory_lines,
             intent=intent,
             demo_mode=bool(demo_mode or self.settings.demo_mode),
@@ -301,7 +348,7 @@ class ChatService:
             self._submit_background(
                 self.memory_service.store_insight,
                 user_id=user_id,
-                message=message,
+                message=processed_text,
                 insight_payload=insight_payload,
                 metadata={"source": source, "mode": "chat"},
             )
@@ -309,21 +356,30 @@ class ChatService:
         self._submit_background(
             self.memory_service.store_interaction,
             user_id=user_id,
-            transcript=message,
+            transcript=processed_text,
             intent=intent,
             metadata={
                 "source": source,
                 "mode": "gemini-chat",
-                "reply": reply,
+                "reply": final_reply,
                 "response_id": response_id,
                 "model_used": model_used,
                 "demo_mode": bool(demo_mode or self.settings.demo_mode),
+                "original_text": message,
+                "translated_text": processed_text,
+                "language": lang,
+                "strategy_used": strategy_data["strategy"]
             },
         )
 
         return {
             "response_id": response_id,
-            "reply": reply,
+            "reply": final_reply,
+            "language": lang,
+            "emotion": emotion_data.get("primary_emotion", "neutral"),
+            "intensity": emotion_data.get("intensity", 0.3),
+            "strategy": strategy_data.get("strategy", "calm"),
+            "extra_action": strategy_data.get("extra_action"),
             "memory_hits": memory_hits,
             "memory_used": bool(memory_lines),
             "intent": intent.model_dump(),

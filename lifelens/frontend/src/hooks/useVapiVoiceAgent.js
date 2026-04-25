@@ -470,6 +470,78 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
     connect();
   }, [connected, connecting, connect, disconnect]);
 
+  const continueWithPrompt = useCallback(
+    async (prompt, options = {}) => {
+      const normalized = normalizeTranscript(String(prompt || ""));
+      if (!normalized) {
+        return false;
+      }
+
+      try {
+        if (!connected && !connecting) {
+          await connect();
+        }
+      } catch {
+        // Continue with fallback below.
+      }
+
+      let injected = false;
+      const instance = vapiRef.current;
+      if (instance) {
+        const candidatePayload = {
+          type: "add-message",
+          message: {
+            role: "system",
+            content: normalized,
+          },
+        };
+
+        const candidateCalls = [
+          async () => {
+            if (typeof instance.send === "function") {
+              await instance.send(candidatePayload);
+              return true;
+            }
+            return false;
+          },
+          async () => {
+            if (typeof instance.sendText === "function") {
+              await instance.sendText(normalized);
+              return true;
+            }
+            return false;
+          },
+          async () => {
+            if (typeof instance.say === "function") {
+              await instance.say(normalized);
+              return true;
+            }
+            return false;
+          },
+        ];
+
+        for (const attempt of candidateCalls) {
+          try {
+            const didInject = await attempt();
+            if (didInject) {
+              injected = true;
+              break;
+            }
+          } catch {
+            // Try next available method.
+          }
+        }
+      }
+
+      if (!injected && options.submitTranscriptFallback !== false) {
+        submitTranscript(normalized);
+      }
+
+      return injected;
+    },
+    [connect, connected, connecting, submitTranscript],
+  );
+
   return useMemo(
     () => ({
       ready,
@@ -483,7 +555,8 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
       userTranscript,
       connect,
       disconnect,
-      toggle
+      toggle,
+      continueWithPrompt,
     }),
     [
       ready,
@@ -498,6 +571,7 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
       connect,
       disconnect,
       toggle,
+      continueWithPrompt,
     ]
   );
 }

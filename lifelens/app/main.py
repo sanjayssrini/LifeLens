@@ -16,6 +16,9 @@ from app.services.session_service import SessionService
 from app.services.settings import get_settings
 from app.services.state_store import StateStore
 from app.services.user_service import UserService
+from app.services.language_service import LanguageService
+from app.services.emotion_service import EmotionService
+from app.services.cheerup_service import CheerupService
 from app.vapi_handler import VapiHandler
 
 
@@ -38,6 +41,9 @@ def create_app() -> FastAPI:
     user_service.ensure_collection()
     session_service = SessionService()
     insight_service = LifeInsightService(settings)
+    language_service = LanguageService(settings)
+    emotion_service = EmotionService(settings)
+    cheerup_service = CheerupService(settings)
 
     state_store = StateStore()
     vapi_handler = VapiHandler(
@@ -45,6 +51,9 @@ def create_app() -> FastAPI:
         action_engine=ActionEngine(),
         memory_service=memory_service,
         insight_service=insight_service,
+        language_service=language_service,
+        emotion_service=emotion_service,
+        cheerup_service=cheerup_service,
         state_store=state_store,
         user_service=user_service,
         fast_mode=settings.fast_mode,
@@ -53,6 +62,9 @@ def create_app() -> FastAPI:
         settings=settings,
         memory_service=memory_service,
         insight_service=insight_service,
+        language_service=language_service,
+        emotion_service=emotion_service,
+        cheerup_service=cheerup_service,
     )
 
     app.state.state_store = state_store
