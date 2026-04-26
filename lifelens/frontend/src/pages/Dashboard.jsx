@@ -107,7 +107,7 @@ function summarizeProfile(memory, name) {
 }
 
 function createParticles() {
-  return Array.from({ length: 12 }).map((_, index) => ({
+  return Array.from({ length: 8 }).map((_, index) => ({
     id: `particle-${index}`,
     size: 2 + (index % 4),
     left: `${4 + (index * 4.4) % 96}%`,
@@ -194,7 +194,7 @@ const thinkingNodes = [
   { left: "49%", top: "4%", lineWidth: "24%", rotate: "90deg", delay: 0.56 },
 ];
 
-const orbWaveStrands = Array.from({ length: 8 }).map((_, index) => ({
+const orbWaveStrands = Array.from({ length: 5 }).map((_, index) => ({
   id: `orb-wave-${index}`,
   top: 18 + index * 4.2,
   opacity: 0.05 + (index % 4) * 0.025,
@@ -217,8 +217,8 @@ const orbScanRings = Array.from({ length: 3 }).map((_, index) => ({
   delay: index * 0.28,
 }));
 
-const orbSpeakerDots = Array.from({ length: 8 }).map((_, index) => {
-  const angle = (index / 8) * Math.PI * 2;
+const orbSpeakerDots = Array.from({ length: 6 }).map((_, index) => {
+  const angle = (index / 6) * Math.PI * 2;
   return {
     id: `speaker-dot-${index}`,
     x: Math.cos(angle) * 126,
@@ -227,8 +227,8 @@ const orbSpeakerDots = Array.from({ length: 8 }).map((_, index) => {
   };
 });
 
-const orbListeningDots = Array.from({ length: 5 }).map((_, index) => {
-  const angle = (index / 5) * Math.PI * 2;
+const orbListeningDots = Array.from({ length: 4 }).map((_, index) => {
+  const angle = (index / 4) * Math.PI * 2;
   return {
     id: `listen-dot-${index}`,
     x: Math.cos(angle) * 108,
@@ -240,15 +240,14 @@ const orbListeningDots = Array.from({ length: 5 }).map((_, index) => {
 const orbConnectionBands = [
   { id: "band-1", width: "74%", height: "24%", rotate: "-16deg", delay: 0 },
   { id: "band-2", width: "66%", height: "18%", rotate: "12deg", delay: 0.24 },
-  { id: "band-3", width: "58%", height: "14%", rotate: "-4deg", delay: 0.42 },
 ];
 
-const DashboardBackground = memo(function DashboardBackground({ reduceMotion, particles }) {
+const DashboardBackground = memo(function DashboardBackground({ reduceMotion, particles, ambientMotionEnabled }) {
   return (
     <div className="pointer-events-none absolute inset-0 -z-20 overflow-hidden">
       <motion.div
         className="absolute inset-[-18%] bg-[radial-gradient(circle_at_48%_10%,rgba(64,139,229,0.16),transparent_34%),radial-gradient(circle_at_12%_22%,rgba(103,126,224,0.12),transparent_28%),radial-gradient(circle_at_82%_68%,rgba(94,146,220,0.1),transparent_26%),linear-gradient(120deg,#050d1c_0%,#07142c_48%,#040a17_100%)]"
-        animate={reduceMotion ? { opacity: 1 } : { backgroundPosition: ["0% 0%", "100% 100%", "0% 0%"] }}
+        animate={ambientMotionEnabled ? { backgroundPosition: ["0% 0%", "100% 100%", "0% 0%"] } : { opacity: 1 }}
         transition={{ duration: 14, repeat: Infinity, ease: "easeInOut" }}
       />
 
@@ -258,7 +257,7 @@ const DashboardBackground = memo(function DashboardBackground({ reduceMotion, pa
           backgroundImage:
             "repeating-linear-gradient(180deg, transparent 0px, transparent 16px, rgba(148,163,184,0.08) 17px, transparent 18px)",
         }}
-        animate={reduceMotion ? { opacity: 0.24 } : { opacity: [0.16, 0.28, 0.16], y: [0, 6, 0] }}
+        animate={ambientMotionEnabled ? { opacity: [0.16, 0.28, 0.16], y: [0, 6, 0] } : { opacity: 0.2 }}
         transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
       />
 
@@ -268,7 +267,7 @@ const DashboardBackground = memo(function DashboardBackground({ reduceMotion, pa
           className="absolute rounded-full bg-cyan-100/50 blur-[0.8px]"
           style={{ width: `${particle.size}px`, height: `${particle.size}px`, left: particle.left, top: particle.top }}
           animate={
-            reduceMotion
+            !ambientMotionEnabled || reduceMotion
               ? { opacity: 0.2 }
               : { y: [0, -12, 0], x: [0, particle.drift, 0], opacity: [0.08, 0.32, 0.08] }
           }
@@ -688,6 +687,7 @@ export default function Dashboard({ session, onLogout }) {
   const [continuityVisible, setContinuityVisible] = useState(false);
   const [thinkingLabelIndex, setThinkingLabelIndex] = useState(0);
   const [voiceFeedback, setVoiceFeedback] = useState({ responseId: "", status: "idle", hidden: false });
+  const [isPageVisible, setIsPageVisible] = useState(true);
   
   // Layer 3 Support States
   const [supportMode, setSupportMode] = useState(null);
@@ -827,8 +827,13 @@ export default function Dashboard({ session, onLogout }) {
   const isReasoning = voice.activity === "processing";
   const isVoiceThinking = isConnecting || isReasoning;
   const isSpeaking = voice.activity === "answering";
-  const reduceMotion = Boolean(prefersReducedMotion || forceReducedMotion);
   const orbActive = isListening || isVoiceThinking || isSpeaking;
+  const reduceMotion = Boolean(prefersReducedMotion || forceReducedMotion || !isPageVisible);
+  const ambientMotionEnabled = Boolean(!reduceMotion && orbActive);
+  const renderedParticles = useMemo(
+    () => (ambientMotionEnabled ? particles : particles.slice(0, 4)),
+    [ambientMotionEnabled, particles],
+  );
 
   const assistantMeta = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -918,6 +923,20 @@ export default function Dashboard({ session, onLogout }) {
     if (saveData || cores <= 4 || memoryGb <= 4) {
       setForceReducedMotion(true);
     }
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return undefined;
+    }
+
+    const syncVisibility = () => {
+      setIsPageVisible(!document.hidden);
+    };
+
+    syncVisibility();
+    document.addEventListener("visibilitychange", syncVisibility);
+    return () => document.removeEventListener("visibilitychange", syncVisibility);
   }, []);
 
   const statusText = useMemo(() => {
@@ -1251,7 +1270,7 @@ export default function Dashboard({ session, onLogout }) {
           isVisualBoost ? "shadow-[inset_0_0_80px_rgba(165,180,252,0.3)] bg-indigo-900/10" : "bg-[#0b1323]"
         }`}
       >
-      <DashboardBackground reduceMotion={reduceMotion} particles={particles} />
+      <DashboardBackground reduceMotion={reduceMotion} particles={renderedParticles} ambientMotionEnabled={ambientMotionEnabled} />
 
       <motion.header
         initial={{ opacity: 0, y: -12 }}
@@ -1352,14 +1371,14 @@ export default function Dashboard({ session, onLogout }) {
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             <motion.div
               className="h-[24rem] w-[24rem] rounded-full bg-cyan-300/8 blur-[78px]"
-              animate={reduceMotion ? { opacity: 0.45 } : { opacity: [0.3, 0.56, 0.3], scale: [1, 1.04, 1] }}
+              animate={ambientMotionEnabled ? { opacity: [0.3, 0.56, 0.3], scale: [1, 1.04, 1] } : { opacity: 0.36 }}
               transition={{ duration: 4.2, repeat: Infinity, ease: "easeInOut" }}
             />
           </div>
 
           <motion.div
             className="pointer-events-none absolute left-[-8%] right-[-8%] top-[31%] h-[10.5rem] overflow-hidden"
-            animate={reduceMotion ? { opacity: 0.18 } : { opacity: [0.08, 0.24, 0.08], x: [-10, 10, -10] }}
+            animate={ambientMotionEnabled ? { opacity: [0.08, 0.24, 0.08], x: [-10, 10, -10] } : { opacity: 0.12 }}
             transition={{ duration: 5.2, repeat: Infinity, ease: "easeInOut" }}
           >
             {orbWaveStrands.map((strand) => (
