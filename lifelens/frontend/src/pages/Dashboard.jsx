@@ -794,14 +794,12 @@ export default function Dashboard({ session, onLogout }) {
       const handled = processIntentTriggers(normalized);
       if (handled) return;
       
-      setShowChat(true);
-      sendMessage(normalized, "voice", {
-        userId: session?.user?.user_id || "",
-        sessionToken: session?.session_token || "",
-        voiceMetadata: detectVoiceMetadata(normalized),
-      });
+      // Note: We intentionally do NOT call setShowChat(true) or sendMessage() here.
+      // The voice agent (Vapi) handles its own LLM communication directly.
+      // Mirroring the voice transcripts to the manual text chat causes the chat drawer
+      // to pop open aggressively and duplicates the conversation.
     },
-    [detectVoiceMetadata, sendMessage, session?.session_token, session?.user?.user_id],
+    [processIntentTriggers]
   );
 
   const voice = useVapiVoiceAgent({
