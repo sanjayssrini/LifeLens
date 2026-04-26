@@ -1,12 +1,20 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function BreathingOverlay({ onClose, onVoicePause, onVoiceResume }) {
   const [phase, setPhase] = useState("Inhale...");
 
+  const onVoicePauseRef = useRef(onVoicePause);
+  const onVoiceResumeRef = useRef(onVoiceResume);
+
+  useEffect(() => {
+    onVoicePauseRef.current = onVoicePause;
+    onVoiceResumeRef.current = onVoiceResume;
+  }, [onVoicePause, onVoiceResume]);
+
   useEffect(() => {
     // Pause voice agent if active
-    if (onVoicePause) onVoicePause();
+    if (onVoicePauseRef.current) onVoicePauseRef.current();
     
     let phaseIndex = 0;
     const phases = ["Inhale...", "Hold...", "Exhale...", "Hold..."];
@@ -19,9 +27,9 @@ export default function BreathingOverlay({ onClose, onVoicePause, onVoiceResume 
 
     return () => {
       clearInterval(interval);
-      if (onVoiceResume) onVoiceResume();
+      if (onVoiceResumeRef.current) onVoiceResumeRef.current();
     };
-  }, [onVoicePause, onVoiceResume]);
+  }, []);
 
   const getScale = () => {
     switch (phase) {

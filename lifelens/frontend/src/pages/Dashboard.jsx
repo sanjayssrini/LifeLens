@@ -12,6 +12,7 @@ import CheerUpOverlay from "../components/CheerUpOverlay";
 import RacingThoughtsOverlay from "../components/RacingThoughtsOverlay";
 import GentleRoutineOverlay from "../components/GentleRoutineOverlay";
 import SOSModal from "../components/SOSModal";
+import ActionPromptOverlay from "../components/ActionPromptOverlay";
 
 const suggestionChips = [
   "I'm feeling anxious right now",
@@ -149,15 +150,21 @@ function detectEmotionFromText(text) {
     return "neutral";
   }
   const lower = String(text).toLowerCase();
-  if (/\b(angry|anger|mad|furious|pissed|hate|damn|shit|fuck|bitch|asshole|rage|frustrated|irritated|outraged|resentful|screaming)\b/.test(lower)) {
+  
+  if (/\b(angry|anger|mad|furious|pissed|hate|damn|shit|fuck|bitch|asshole|rage|frustrated|irritated|outraged|resentful|screaming|annoyed|unfair)\b/.test(lower)) {
     return "angry";
   }
-  if (/\b(panic|panicking|anxious|anxiety|worried|nervous|overwhelmed|scared|fearful|tense|stressed)\b/.test(lower)) {
+  if (/\b(panic|panicking|anxious|anxiety|worried|nervous|overwhelmed|scared|fearful|tense|stressed|racing|breathless|hyperventilating|dread|can't breathe|freaking out)\b/.test(lower)) {
     return "anxious";
   }
-  if (/\b(sad|depressed|broken|hopeless|down|tearful|lonely|hurt|grief|heartbroken)\b/.test(lower)) {
+  if (/\b(sad|depressed|broken|hopeless|down|tearful|lonely|hurt|grief|heartbroken|crying|upset|alone|lost|bad|terrible|awful|miserable|empty|hollow|nobody)\b/.test(lower)) {
     return "sad";
   }
+  // Catch vague distress phrases
+  if (lower.includes("idk") || lower.includes("don't know") || lower.includes("something happened") || lower.includes("tired of this")) {
+    return "sad";
+  }
+  
   return "neutral";
 }
 
@@ -522,6 +529,7 @@ const ChatDrawer = memo(function ChatDrawer({
   onDraftConsumed,
   onInitialDraftAutoSent,
   onSupportAction,
+  onIntentTrigger,
   chat,
 }) {
   const { resetChat, messages, isThinking, sendFeedback, sendMessage } = chat;
@@ -559,10 +567,10 @@ const ChatDrawer = memo(function ChatDrawer({
 
   const submitChat = useCallback(
     (text, options = {}) => {
-      // Check for danger keywords - if detected, trigger SOS immediately
-      if (detectDanger(text)) {
-        setShowSOSModal(true);
-        return;
+      // Use the injected intent router for SOS, Games, Companion, Breathing, etc.
+      if (onIntentTrigger) {
+        const handled = onIntentTrigger(text);
+        if (handled) return;
       }
       
       sendMessage(text, "text", {
@@ -687,9 +695,11 @@ export default function Dashboard({ session, onLogout }) {
   const [supportStrategy, setSupportStrategy] = useState("companion");
   const [isVisualBoost, setIsVisualBoost] = useState(false);
   const [showGamesPortal, setShowGamesPortal] = useState(false);
+  const [showCompanionPortal, setShowCompanionPortal] = useState(false);
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const [languageSelection, setLanguageSelection] = useState({ mode: "detected", value: "en" });
   const [showSOSModal, setShowSOSModal] = useState(false);
+  const [actionPromptConfig, setActionPromptConfig] = useState(null);
   const languageMenuRef = useRef(null);
   const voiceTranscriptSentRef = useRef("");
 
@@ -699,6 +709,75 @@ export default function Dashboard({ session, onLogout }) {
   const settingsMenuRef = useRef(null);
   const chipTimeoutRef = useRef(null);
   const particles = useMemo(() => createParticles(), []);
+
+  const processIntentTriggers = useCallback((text) => {
+    if (!text) return false;
+    const lower = text.toLowerCase();
+    
+    // 1. SOS / Danger (Immediate Override)
+    if (detectDanger(text)) {
+      setShowSOSModal(true);
+      return true; // handled
+    }
+    
+    // 2. Play Games Prompt
+    if (/\b(sad|bored|boredom|play games|game|sudoku|bubble|tic tac toe)\b/.test(lower) && /\b(play|game|bored)\b/.test(lower)) {
+      setActionPromptConfig(prev => {
+        if (prev) return prev;
+        return {
+          title: "Need a distraction?",
+          description: "Would you like to play some casual games to take your mind off things?",
+          confirmText: "Yes, play games",
+          cancelText: "No thanks",
+          onConfirm: () => {
+            setActionPromptConfig(null);
+            setShowGamesPortal(true);
+          },
+          onCancel: () => setActionPromptConfig(null)
+        };
+      });
+      // We don't return true because we still want to send the message to the AI
+      // Return true only if you want to swallow the message.
+    }
+    
+    // 3. Companion / Sit with me
+    else if (/\b(alone|lonely|sit with me|company|friend)\b/.test(lower)) {
+      setActionPromptConfig(prev => {
+        if (prev) return prev;
+        return {
+          title: "You are not alone",
+          description: "Do you want me to sit with you for a while?",
+          confirmText: "Yes, sit with me",
+          cancelText: "I'm okay",
+          onConfirm: () => {
+            setActionPromptConfig(null);
+            setSupportMode("companion");
+          },
+          onCancel: () => setActionPromptConfig(null)
+        };
+      });
+    }
+    
+    // 4. Breathing / Anxious
+    else if (/\b(breathless|anxious|panic|breathe|breathing|can't breathe|hyperventilating)\b/.test(lower)) {
+      setActionPromptConfig(prev => {
+        if (prev) return prev;
+        return {
+          title: "Let's take a breath",
+          description: "Should we try a quick breathing exercise together?",
+          confirmText: "Yes, breathe",
+          cancelText: "No, keep talking",
+          onConfirm: () => {
+            setActionPromptConfig(null);
+            setSupportMode("breathing");
+          },
+          onCancel: () => setActionPromptConfig(null)
+        };
+      });
+    }
+    
+    return false; // let the message go to the backend
+  }, []);
 
   const submitVoiceTranscript = useCallback(
     (transcript) => {
@@ -711,11 +790,9 @@ export default function Dashboard({ session, onLogout }) {
       }
       voiceTranscriptSentRef.current = normalized;
       
-      // Check for danger keywords - if detected, trigger SOS immediately
-      if (detectDanger(normalized)) {
-        setShowSOSModal(true);
-        return;
-      }
+      // Run keyword router before sending to backend
+      const handled = processIntentTriggers(normalized);
+      if (handled) return;
       
       setShowChat(true);
       sendMessage(normalized, "voice", {
@@ -1923,6 +2000,7 @@ export default function Dashboard({ session, onLogout }) {
               }}
               onInitialDraftAutoSent={() => setChatAutoSendSeed(false)}
               onSupportAction={handleSupportAction}
+              onIntentTrigger={processIntentTriggers}
               chat={chat}
             />
           )}
@@ -2079,6 +2157,16 @@ export default function Dashboard({ session, onLogout }) {
 
         {showGamesPortal && (
           <GamesPortal onClose={() => setShowGamesPortal(false)} />
+        )}
+
+        {showCompanionPortal && (
+          <CompanionPortal chat={chat} onClose={() => setShowCompanionPortal(false)} onIntentTrigger={processIntentTriggers} />
+        )}
+
+        {actionPromptConfig && (
+          <ActionPromptOverlay
+            {...actionPromptConfig}
+          />
         )}
 
         <AnimatePresence>

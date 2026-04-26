@@ -176,6 +176,11 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
     return micPermissionPromiseRef.current;
   }, []);
 
+  const onFinalTranscriptRef = useRef(onFinalTranscript);
+  useEffect(() => {
+    onFinalTranscriptRef.current = onFinalTranscript;
+  }, [onFinalTranscript]);
+
   const submitTranscript = useCallback((text) => {
     const normalized = normalizeTranscript(text || "");
     if (!normalized) {
@@ -185,8 +190,8 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
       return;
     }
     lastSubmittedTranscriptRef.current = normalized;
-    onFinalTranscript?.(normalized);
-  }, [onFinalTranscript]);
+    onFinalTranscriptRef.current?.(normalized);
+  }, []);
 
   const scheduleUserTranscriptUpdate = useCallback((text, immediate = false) => {
     pendingUserTranscriptRef.current = text;
@@ -350,8 +355,16 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
           return;
         }
 
+        // Immediate trigger for danger keywords
+        const isUrgent = /\b(danger|emergency|help|sos|hurt|injury|injured|bleeding|stabbed|shot|attacked|assault|rape|dying|dead|suicide|kill|myself|poison|overdose|crash|accident|fire|threat|threatened|abusive|abuse|violent|violence|urgent)\b/i.test(transcript);
+        
+        if (isUrgent) {
+           submitTranscript(transcript);
+           return;
+        }
+
         // Keep transcription lively and reduce perceived latency by submitting stable interim chunks.
-        if (transcript.length >= 20) {
+        if (transcript.length >= 8) {
           interimSubmitTimerRef.current = setTimeout(() => {
             const stable = lastUserTranscriptRef.current;
             if (!stable || stable !== transcript) {
@@ -362,7 +375,7 @@ export function useVapiVoiceAgent({ onFinalTranscript, userId = "", sessionToken
             }
             if (lastSubmittedTranscriptRef.current && stable.startsWith(lastSubmittedTranscriptRef.current)) {
               const delta = stable.length - lastSubmittedTranscriptRef.current.length;
-              if (delta < 12) {
+              if (delta < 8) {
                 return;
               }
             }
