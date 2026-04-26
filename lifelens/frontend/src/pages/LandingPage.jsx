@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { motion, useReducedMotion, useScroll, useTransform } from "framer-motion";
+import { motion, useScroll, useTransform } from "framer-motion";
 
 const labels = ["Problem", "Understanding", "Thinking", "Memory", "Action", "Resolution"];
 const vfxOrbs = [
@@ -50,23 +50,7 @@ function Stage({ opacity, children }) {
 
 export default function LandingPage({ onStartTalking }) {
   const containerRef = useRef(null);
-  const prefersReducedMotion = useReducedMotion();
-  const [isPageVisible, setIsPageVisible] = useState(true);
   const [isLowPowerDevice, setIsLowPowerDevice] = useState(false);
-
-  useEffect(() => {
-    if (typeof document === "undefined") {
-      return undefined;
-    }
-
-    const syncVisibility = () => {
-      setIsPageVisible(!document.hidden);
-    };
-
-    syncVisibility();
-    document.addEventListener("visibilitychange", syncVisibility);
-    return () => document.removeEventListener("visibilitychange", syncVisibility);
-  }, []);
 
   useEffect(() => {
     if (typeof navigator === "undefined") {
@@ -82,7 +66,6 @@ export default function LandingPage({ onStartTalking }) {
     }
   }, []);
 
-  const reduceMotion = Boolean(prefersReducedMotion || isLowPowerDevice || !isPageVisible);
   const allowLoopMotion = false;
   const renderedPulseRings = useMemo(
     () => (isLowPowerDevice ? pulseRings.slice(0, 1) : pulseRings),
