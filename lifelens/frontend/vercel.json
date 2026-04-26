@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "lifelens-backend-production.up.railway.app"
+    }
+  ]
+}
