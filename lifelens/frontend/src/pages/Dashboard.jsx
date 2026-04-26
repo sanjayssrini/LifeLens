@@ -12,6 +12,7 @@ import CheerUpOverlay from "../components/CheerUpOverlay";
 import RacingThoughtsOverlay from "../components/RacingThoughtsOverlay";
 import GentleRoutineOverlay from "../components/GentleRoutineOverlay";
 import SOSModal from "../components/SOSModal";
+import ActionPromptOverlay from "../components/ActionPromptOverlay";
 
 const suggestionChips = [
   "I'm feeling anxious right now",
@@ -106,7 +107,7 @@ function summarizeProfile(memory, name) {
 }
 
 function createParticles() {
-  return Array.from({ length: 12 }).map((_, index) => ({
+  return Array.from({ length: 8 }).map((_, index) => ({
     id: `particle-${index}`,
     size: 2 + (index % 4),
     left: `${4 + (index * 4.4) % 96}%`,
@@ -149,15 +150,21 @@ function detectEmotionFromText(text) {
     return "neutral";
   }
   const lower = String(text).toLowerCase();
-  if (/\b(angry|anger|mad|furious|pissed|hate|damn|shit|fuck|bitch|asshole|rage|frustrated|irritated|outraged|resentful|screaming)\b/.test(lower)) {
+  
+  if (/\b(angry|anger|mad|furious|pissed|hate|damn|shit|fuck|bitch|asshole|rage|frustrated|irritated|outraged|resentful|screaming|annoyed|unfair)\b/.test(lower)) {
     return "angry";
   }
-  if (/\b(panic|panicking|anxious|anxiety|worried|nervous|overwhelmed|scared|fearful|tense|stressed)\b/.test(lower)) {
+  if (/\b(panic|panicking|anxious|anxiety|worried|nervous|overwhelmed|scared|fearful|tense|stressed|racing|breathless|hyperventilating|dread|can't breathe|freaking out)\b/.test(lower)) {
     return "anxious";
   }
-  if (/\b(sad|depressed|broken|hopeless|down|tearful|lonely|hurt|grief|heartbroken)\b/.test(lower)) {
+  if (/\b(sad|depressed|broken|hopeless|down|tearful|lonely|hurt|grief|heartbroken|crying|upset|alone|lost|bad|terrible|awful|miserable|empty|hollow|nobody)\b/.test(lower)) {
     return "sad";
   }
+  // Catch vague distress phrases
+  if (lower.includes("idk") || lower.includes("don't know") || lower.includes("something happened") || lower.includes("tired of this")) {
+    return "sad";
+  }
+  
   return "neutral";
 }
 
@@ -187,7 +194,7 @@ const thinkingNodes = [
   { left: "49%", top: "4%", lineWidth: "24%", rotate: "90deg", delay: 0.56 },
 ];
 
-const orbWaveStrands = Array.from({ length: 8 }).map((_, index) => ({
+const orbWaveStrands = Array.from({ length: 5 }).map((_, index) => ({
   id: `orb-wave-${index}`,
   top: 18 + index * 4.2,
   opacity: 0.05 + (index % 4) * 0.025,
@@ -210,8 +217,8 @@ const orbScanRings = Array.from({ length: 3 }).map((_, index) => ({
   delay: index * 0.28,
 }));
 
-const orbSpeakerDots = Array.from({ length: 8 }).map((_, index) => {
-  const angle = (index / 8) * Math.PI * 2;
+const orbSpeakerDots = Array.from({ length: 6 }).map((_, index) => {
+  const angle = (index / 6) * Math.PI * 2;
   return {
     id: `speaker-dot-${index}`,
     x: Math.cos(angle) * 126,
@@ -220,8 +227,8 @@ const orbSpeakerDots = Array.from({ length: 8 }).map((_, index) => {
   };
 });
 
-const orbListeningDots = Array.from({ length: 5 }).map((_, index) => {
-  const angle = (index / 5) * Math.PI * 2;
+const orbListeningDots = Array.from({ length: 4 }).map((_, index) => {
+  const angle = (index / 4) * Math.PI * 2;
   return {
     id: `listen-dot-${index}`,
     x: Math.cos(angle) * 108,
@@ -233,15 +240,14 @@ const orbListeningDots = Array.from({ length: 5 }).map((_, index) => {
 const orbConnectionBands = [
   { id: "band-1", width: "74%", height: "24%", rotate: "-16deg", delay: 0 },
   { id: "band-2", width: "66%", height: "18%", rotate: "12deg", delay: 0.24 },
-  { id: "band-3", width: "58%", height: "14%", rotate: "-4deg", delay: 0.42 },
 ];
 
-const DashboardBackground = memo(function DashboardBackground({ reduceMotion, particles }) {
+const DashboardBackground = memo(function DashboardBackground({ reduceMotion, particles, ambientMotionEnabled }) {
   return (
     <div className="pointer-events-none absolute inset-0 -z-20 overflow-hidden">
       <motion.div
         className="absolute inset-[-18%] bg-[radial-gradient(circle_at_48%_10%,rgba(64,139,229,0.16),transparent_34%),radial-gradient(circle_at_12%_22%,rgba(103,126,224,0.12),transparent_28%),radial-gradient(circle_at_82%_68%,rgba(94,146,220,0.1),transparent_26%),linear-gradient(120deg,#050d1c_0%,#07142c_48%,#040a17_100%)]"
-        animate={reduceMotion ? { opacity: 1 } : { backgroundPosition: ["0% 0%", "100% 100%", "0% 0%"] }}
+        animate={ambientMotionEnabled ? { backgroundPosition: ["0% 0%", "100% 100%", "0% 0%"] } : { opacity: 1 }}
         transition={{ duration: 14, repeat: Infinity, ease: "easeInOut" }}
       />
 
@@ -251,7 +257,7 @@ const DashboardBackground = memo(function DashboardBackground({ reduceMotion, pa
           backgroundImage:
             "repeating-linear-gradient(180deg, transparent 0px, transparent 16px, rgba(148,163,184,0.08) 17px, transparent 18px)",
         }}
-        animate={reduceMotion ? { opacity: 0.24 } : { opacity: [0.16, 0.28, 0.16], y: [0, 6, 0] }}
+        animate={ambientMotionEnabled ? { opacity: [0.16, 0.28, 0.16], y: [0, 6, 0] } : { opacity: 0.2 }}
         transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
       />
 
@@ -261,7 +267,7 @@ const DashboardBackground = memo(function DashboardBackground({ reduceMotion, pa
           className="absolute rounded-full bg-cyan-100/50 blur-[0.8px]"
           style={{ width: `${particle.size}px`, height: `${particle.size}px`, left: particle.left, top: particle.top }}
           animate={
-            reduceMotion
+            !ambientMotionEnabled || reduceMotion
               ? { opacity: 0.2 }
               : { y: [0, -12, 0], x: [0, particle.drift, 0], opacity: [0.08, 0.32, 0.08] }
           }
@@ -522,6 +528,7 @@ const ChatDrawer = memo(function ChatDrawer({
   onDraftConsumed,
   onInitialDraftAutoSent,
   onSupportAction,
+  onIntentTrigger,
   chat,
 }) {
   const { resetChat, messages, isThinking, sendFeedback, sendMessage } = chat;
@@ -559,10 +566,10 @@ const ChatDrawer = memo(function ChatDrawer({
 
   const submitChat = useCallback(
     (text, options = {}) => {
-      // Check for danger keywords - if detected, trigger SOS immediately
-      if (detectDanger(text)) {
-        setShowSOSModal(true);
-        return;
+      // Use the injected intent router for SOS, Games, Companion, Breathing, etc.
+      if (onIntentTrigger) {
+        const handled = onIntentTrigger(text);
+        if (handled) return;
       }
       
       sendMessage(text, "text", {
@@ -680,6 +687,7 @@ export default function Dashboard({ session, onLogout }) {
   const [continuityVisible, setContinuityVisible] = useState(false);
   const [thinkingLabelIndex, setThinkingLabelIndex] = useState(0);
   const [voiceFeedback, setVoiceFeedback] = useState({ responseId: "", status: "idle", hidden: false });
+  const [isPageVisible, setIsPageVisible] = useState(true);
   
   // Layer 3 Support States
   const [supportMode, setSupportMode] = useState(null);
@@ -687,9 +695,11 @@ export default function Dashboard({ session, onLogout }) {
   const [supportStrategy, setSupportStrategy] = useState("companion");
   const [isVisualBoost, setIsVisualBoost] = useState(false);
   const [showGamesPortal, setShowGamesPortal] = useState(false);
+  const [showCompanionPortal, setShowCompanionPortal] = useState(false);
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const [languageSelection, setLanguageSelection] = useState({ mode: "detected", value: "en" });
   const [showSOSModal, setShowSOSModal] = useState(false);
+  const [actionPromptConfig, setActionPromptConfig] = useState(null);
   const languageMenuRef = useRef(null);
   const voiceTranscriptSentRef = useRef("");
 
@@ -699,6 +709,75 @@ export default function Dashboard({ session, onLogout }) {
   const settingsMenuRef = useRef(null);
   const chipTimeoutRef = useRef(null);
   const particles = useMemo(() => createParticles(), []);
+
+  const processIntentTriggers = useCallback((text) => {
+    if (!text) return false;
+    const lower = text.toLowerCase();
+    
+    // 1. SOS / Danger (Immediate Override)
+    if (detectDanger(text)) {
+      setShowSOSModal(true);
+      return true; // handled
+    }
+    
+    // 2. Play Games Prompt
+    if (/\b(sad|bored|boredom|play games|game|sudoku|bubble|tic tac toe)\b/.test(lower) && /\b(play|game|bored)\b/.test(lower)) {
+      setActionPromptConfig(prev => {
+        if (prev) return prev;
+        return {
+          title: "Need a distraction?",
+          description: "Would you like to play some casual games to take your mind off things?",
+          confirmText: "Yes, play games",
+          cancelText: "No thanks",
+          onConfirm: () => {
+            setActionPromptConfig(null);
+            setShowGamesPortal(true);
+          },
+          onCancel: () => setActionPromptConfig(null)
+        };
+      });
+      // We don't return true because we still want to send the message to the AI
+      // Return true only if you want to swallow the message.
+    }
+    
+    // 3. Companion / Sit with me
+    else if (/\b(alone|lonely|sit with me|company|friend)\b/.test(lower)) {
+      setActionPromptConfig(prev => {
+        if (prev) return prev;
+        return {
+          title: "You are not alone",
+          description: "Do you want me to sit with you for a while?",
+          confirmText: "Yes, sit with me",
+          cancelText: "I'm okay",
+          onConfirm: () => {
+            setActionPromptConfig(null);
+            setSupportMode("companion");
+          },
+          onCancel: () => setActionPromptConfig(null)
+        };
+      });
+    }
+    
+    // 4. Breathing / Anxious
+    else if (/\b(breathless|anxious|panic|breathe|breathing|can't breathe|hyperventilating)\b/.test(lower)) {
+      setActionPromptConfig(prev => {
+        if (prev) return prev;
+        return {
+          title: "Let's take a breath",
+          description: "Should we try a quick breathing exercise together?",
+          confirmText: "Yes, breathe",
+          cancelText: "No, keep talking",
+          onConfirm: () => {
+            setActionPromptConfig(null);
+            setSupportMode("breathing");
+          },
+          onCancel: () => setActionPromptConfig(null)
+        };
+      });
+    }
+    
+    return false; // let the message go to the backend
+  }, []);
 
   const submitVoiceTranscript = useCallback(
     (transcript) => {
@@ -711,20 +790,16 @@ export default function Dashboard({ session, onLogout }) {
       }
       voiceTranscriptSentRef.current = normalized;
       
-      // Check for danger keywords - if detected, trigger SOS immediately
-      if (detectDanger(normalized)) {
-        setShowSOSModal(true);
-        return;
-      }
+      // Run keyword router before sending to backend
+      const handled = processIntentTriggers(normalized);
+      if (handled) return;
       
-      setShowChat(true);
-      sendMessage(normalized, "voice", {
-        userId: session?.user?.user_id || "",
-        sessionToken: session?.session_token || "",
-        voiceMetadata: detectVoiceMetadata(normalized),
-      });
+      // Note: We intentionally do NOT call setShowChat(true) or sendMessage() here.
+      // The voice agent (Vapi) handles its own LLM communication directly.
+      // Mirroring the voice transcripts to the manual text chat causes the chat drawer
+      // to pop open aggressively and duplicates the conversation.
     },
-    [detectVoiceMetadata, sendMessage, session?.session_token, session?.user?.user_id],
+    [processIntentTriggers]
   );
 
   const voice = useVapiVoiceAgent({
@@ -752,8 +827,13 @@ export default function Dashboard({ session, onLogout }) {
   const isReasoning = voice.activity === "processing";
   const isVoiceThinking = isConnecting || isReasoning;
   const isSpeaking = voice.activity === "answering";
-  const reduceMotion = Boolean(prefersReducedMotion || forceReducedMotion);
   const orbActive = isListening || isVoiceThinking || isSpeaking;
+  const reduceMotion = Boolean(prefersReducedMotion || forceReducedMotion || !isPageVisible);
+  const ambientMotionEnabled = Boolean(!reduceMotion && orbActive);
+  const renderedParticles = useMemo(
+    () => (ambientMotionEnabled ? particles : particles.slice(0, 4)),
+    [ambientMotionEnabled, particles],
+  );
 
   const assistantMeta = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -843,6 +923,20 @@ export default function Dashboard({ session, onLogout }) {
     if (saveData || cores <= 4 || memoryGb <= 4) {
       setForceReducedMotion(true);
     }
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return undefined;
+    }
+
+    const syncVisibility = () => {
+      setIsPageVisible(!document.hidden);
+    };
+
+    syncVisibility();
+    document.addEventListener("visibilitychange", syncVisibility);
+    return () => document.removeEventListener("visibilitychange", syncVisibility);
   }, []);
 
   const statusText = useMemo(() => {
@@ -1176,7 +1270,7 @@ export default function Dashboard({ session, onLogout }) {
           isVisualBoost ? "shadow-[inset_0_0_80px_rgba(165,180,252,0.3)] bg-indigo-900/10" : "bg-[#0b1323]"
         }`}
       >
-      <DashboardBackground reduceMotion={reduceMotion} particles={particles} />
+      <DashboardBackground reduceMotion={reduceMotion} particles={renderedParticles} ambientMotionEnabled={ambientMotionEnabled} />
 
       <motion.header
         initial={{ opacity: 0, y: -12 }}
@@ -1277,14 +1371,14 @@ export default function Dashboard({ session, onLogout }) {
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             <motion.div
               className="h-[24rem] w-[24rem] rounded-full bg-cyan-300/8 blur-[78px]"
-              animate={reduceMotion ? { opacity: 0.45 } : { opacity: [0.3, 0.56, 0.3], scale: [1, 1.04, 1] }}
+              animate={ambientMotionEnabled ? { opacity: [0.3, 0.56, 0.3], scale: [1, 1.04, 1] } : { opacity: 0.36 }}
               transition={{ duration: 4.2, repeat: Infinity, ease: "easeInOut" }}
             />
           </div>
 
           <motion.div
             className="pointer-events-none absolute left-[-8%] right-[-8%] top-[31%] h-[10.5rem] overflow-hidden"
-            animate={reduceMotion ? { opacity: 0.18 } : { opacity: [0.08, 0.24, 0.08], x: [-10, 10, -10] }}
+            animate={ambientMotionEnabled ? { opacity: [0.08, 0.24, 0.08], x: [-10, 10, -10] } : { opacity: 0.12 }}
             transition={{ duration: 5.2, repeat: Infinity, ease: "easeInOut" }}
           >
             {orbWaveStrands.map((strand) => (
@@ -1923,6 +2017,7 @@ export default function Dashboard({ session, onLogout }) {
               }}
               onInitialDraftAutoSent={() => setChatAutoSendSeed(false)}
               onSupportAction={handleSupportAction}
+              onIntentTrigger={processIntentTriggers}
               chat={chat}
             />
           )}
@@ -2079,6 +2174,16 @@ export default function Dashboard({ session, onLogout }) {
 
         {showGamesPortal && (
           <GamesPortal onClose={() => setShowGamesPortal(false)} />
+        )}
+
+        {showCompanionPortal && (
+          <CompanionPortal chat={chat} onClose={() => setShowCompanionPortal(false)} onIntentTrigger={processIntentTriggers} />
+        )}
+
+        {actionPromptConfig && (
+          <ActionPromptOverlay
+            {...actionPromptConfig}
+          />
         )}
 
         <AnimatePresence>

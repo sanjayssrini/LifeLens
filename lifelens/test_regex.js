@@ -1,0 +1,1 @@
+console.log(/\b(danger|emergency|danger|help|sos|hurt|injury|injured|bleeding|stabbed|shot|attacked|assault|rape|dying|dead|suicide|kill|myself|poison|overdose|crash|accident|fire|threat|threatened|abusive|abuse|violent|violence|someone is|i'm being|being attacked|being hurt|someone hurt|call police|call ambulance|911|police|hospital|urgent)\b/.test("i'm in danger."));
